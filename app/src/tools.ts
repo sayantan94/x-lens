@@ -13,10 +13,21 @@ import { exec } from "node:child_process";
 // Helpers
 // ---------------------------------------------------------------------------
 
+/** Max text size for tool results (~12K tokens). Prevents context overflow from huge pages. */
+const MAX_TEXT_CHARS = 50_000;
+
+function truncateText(text: string, limit = MAX_TEXT_CHARS): string {
+  if (text.length <= limit) return text;
+  const kept = text.slice(0, limit);
+  const dropped = text.length - limit;
+  return `${kept}\n\n[...truncated ${dropped} characters]`;
+}
+
 async function browserResult(
   browser: BrowserController,
 ): Promise<(TextContent | ImageContent)[]> {
   const snap = await browser.snapshot();
+  const tree = truncateText(snap.accessibilityTree, 30_000);
   return [
     {
       type: "image" as const,
@@ -25,14 +36,14 @@ async function browserResult(
     },
     {
       type: "text" as const,
-      text: `URL: ${snap.url}\nTitle: ${snap.title}\n\nAccessibility Tree:\n${snap.accessibilityTree}`,
+      text: `URL: ${snap.url}\nTitle: ${snap.title}\n\nAccessibility Tree:\n${tree}`,
     },
   ];
 }
 
 function textResult(text: string): AgentToolResult<void> {
   return {
-    content: [{ type: "text", text }],
+    content: [{ type: "text", text: truncateText(text) }],
     details: undefined,
   };
 }

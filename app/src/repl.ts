@@ -1,6 +1,6 @@
 import * as readline from "node:readline";
 import { Agent, type AgentEvent } from "@mariozechner/pi-agent-core";
-import { getModel, type Message } from "@mariozechner/pi-ai";
+import { getModel, type AssistantMessage, type Message } from "@mariozechner/pi-ai";
 import chalk from "chalk";
 import { BrowserController } from "./browser.js";
 import { createTools } from "./tools.js";
@@ -15,6 +15,7 @@ import {
 	saveSessionMessages,
 	clearSession,
 } from "./memory.js";
+import { shouldCompact, isContextOverflow, compact } from "./compaction.js";
 
 export interface ReplOptions {
 	visible?: boolean;
@@ -58,12 +59,18 @@ When using the browser:
 5. Check the result via another screenshot
 6. Repeat until the task is done
 
-When the user asks you to do something:
-- If a skill matches their request, follow the skill's instructions
-- If no skill matches, use your general capabilities
-- Prefer using the browser for web tasks
-- Use shell for local commands and scripts
-- Use fetch for simple API calls
+IMPORTANT — Skill Usage Protocol:
+1. BEFORE doing anything, scan the Available Skills list below for a match to the user's request
+2. If ANY skill matches (even partially), you MUST call the skill_read tool to load its full instructions FIRST
+3. Then follow the skill's instructions exactly — do not freestyle when a skill exists
+4. Only use general capabilities if NO skill matches the request
+5. When using a skill, announce it: "Using skill: <name>"
+
+Tools:
+- Browser for web tasks (navigate, click, type, scroll, screenshot)
+- Shell for local commands and scripts
+- Fetch for API calls (prefer this over browser for JSON APIs)
+- Web search for Google queries
 
 Always report back what you did and the outcome.
 
@@ -114,6 +121,7 @@ export async function runInteractive(options: ReplOptions = {}): Promise<void> {
 	let agentBusy = false;
 	let responseText = "";
 	let hasError = false;
+	let lastInputTokens = 0;
 
 	const browserToolNames = new Set([
 		"browser_navigate", "browser_screenshot", "browser_click",
@@ -122,6 +130,34 @@ export async function runInteractive(options: ReplOptions = {}): Promise<void> {
 
 	// Track tool start times for duration calculation (like mom)
 	const toolStartTimes = new Map<string, { startTime: number; args: Record<string, unknown> }>();
+
+	// Compaction helper
+	const logCompaction = (msg: string) => {
+		console.log(chalk.magenta(`  ⟳ ${msg}`));
+	};
+
+	async function checkAndCompact(): Promise<void> {
+		if (!shouldCompact(lastInputTokens, model.contextWindow)) return;
+
+		logCompaction(`Context at ${lastInputTokens} tokens (limit: ${model.contextWindow}). Compacting...`);
+		status.addUpdate({
+			type: "message",
+			timestamp: Date.now(),
+			content: "Compacting conversation context...",
+		});
+
+		try {
+			const result = await compact(agent, model, logCompaction);
+			if (result) {
+				// Persist the compacted session
+				saveSessionMessages(agent.state.messages as Message[]);
+				logCompaction(`Done. ${result.messagesRemoved} messages summarized, ${result.messagesKept} kept.`);
+			}
+		} catch (err) {
+			const msg = err instanceof Error ? err.message : String(err);
+			console.error(chalk.red(`  Compaction failed: ${msg}`));
+		}
+	}
 
 	// Subscribe to events ONCE (mom pattern — subscribe once, mutable run state)
 	agent.subscribe((event: AgentEvent) => {
@@ -154,8 +190,8 @@ export async function runInteractive(options: ReplOptions = {}): Promise<void> {
 			const args = started?.args ?? {};
 			toolStartTimes.delete(event.toolCallId);
 
-			const isError = !!(event as any).isError;
-			console.log(renderToolEnd(event.toolName, args, durationMs, event.result, isError));
+			const isErr = !!(event as any).isError;
+			console.log(renderToolEnd(event.toolName, args, durationMs, event.result, isErr));
 
 			// Browser screenshots for status page
 			if (browserToolNames.has(event.toolName)) {
@@ -174,9 +210,37 @@ export async function runInteractive(options: ReplOptions = {}): Promise<void> {
 			}
 		}
 
-		// Persist messages as they complete (like mom's session manager)
+		// Track token usage + check for overflow on each assistant message
 		if (event.type === "message_end") {
 			appendSessionMessage(event.message as Message);
+
+			// Track usage from assistant messages
+			const msg = event.message as any;
+			if (msg.role === "assistant" && msg.usage) {
+				lastInputTokens = msg.usage.input + (msg.usage.cacheRead || 0);
+
+				// Check for overflow error — need to compact and retry
+				if (isContextOverflow(msg as AssistantMessage)) {
+					logCompaction("Context overflow detected! Emergency compaction...");
+					// Remove the error message from agent state
+					const messages = [...agent.state.messages] as Message[];
+					messages.pop(); // remove the error
+					agent.replaceMessages(messages);
+
+					// Compact and retry
+					compact(agent, model, logCompaction).then((result) => {
+						if (result) {
+							saveSessionMessages(agent.state.messages as Message[]);
+							logCompaction("Retrying after compaction...");
+							agent.continue();
+						}
+					}).catch((err) => {
+						console.error(renderError(`Emergency compaction failed: ${err instanceof Error ? err.message : String(err)}`));
+						agentBusy = false;
+					});
+					return; // don't proceed to normal flow
+				}
+			}
 		}
 
 		// Agent finished a complete run
@@ -204,7 +268,11 @@ export async function runInteractive(options: ReplOptions = {}): Promise<void> {
 
 			responseText = "";
 			hasError = false;
-			agentBusy = false;
+
+			// Check if we should proactively compact before next turn
+			checkAndCompact().finally(() => {
+				agentBusy = false;
+			});
 		}
 	});
 
