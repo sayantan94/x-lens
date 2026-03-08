@@ -1,15 +1,12 @@
+import * as readline from "node:readline";
 import { Agent } from "@mariozechner/pi-agent-core";
 import { getModel } from "@mariozechner/pi-ai";
-import {
-	TUI, ProcessTerminal, Container, Editor, Markdown, Loader, Text,
-	type EditorTheme, type SelectListTheme, type MarkdownTheme,
-	matchesKey, Key,
-} from "@mariozechner/pi-tui";
 import chalk from "chalk";
 import { BrowserController } from "./browser.js";
 import { createBrowserTools } from "./tools.js";
 import { loadSkills, formatSkillsForPrompt } from "./skills.js";
 import { StatusServer } from "./status-server.js";
+import { renderMarkdown, renderError, renderToolUsage, renderHeader } from "./render.js";
 import { join } from "node:path";
 import { readMemory, appendToSession, loadSession, clearSession } from "./memory.js";
 
@@ -62,38 +59,6 @@ Save things like: user preferences, frequently used URLs, login info hints, recu
 ${skillsSection}`;
 }
 
-// -- Themes --
-
-const selectListTheme: SelectListTheme = {
-	selectedPrefix: (s) => chalk.cyan(s),
-	selectedText: (s) => chalk.cyan(s),
-	description: (s) => chalk.dim(s),
-	scrollInfo: (s) => chalk.dim(s),
-	noMatch: (s) => chalk.dim(s),
-};
-
-const editorTheme: EditorTheme = {
-	borderColor: (s) => chalk.cyan(s),
-	selectList: selectListTheme,
-};
-
-const markdownTheme: MarkdownTheme = {
-	heading: (s) => chalk.bold.cyan(s),
-	link: (s) => chalk.blue(s),
-	linkUrl: (s) => chalk.blue.underline(s),
-	code: (s) => chalk.yellow(s),
-	codeBlock: (s) => chalk.gray(s),
-	codeBlockBorder: (s) => chalk.dim(s),
-	quote: (s) => chalk.italic.gray(s),
-	quoteBorder: (s) => chalk.dim(s),
-	hr: (s) => chalk.dim(s),
-	listBullet: (s) => chalk.cyan(s),
-	bold: (s) => chalk.bold(s),
-	italic: (s) => chalk.italic(s),
-	strikethrough: (s) => chalk.strikethrough(s),
-	underline: (s) => chalk.underline(s),
-};
-
 export async function runInteractive(options: ReplOptions = {}): Promise<void> {
 	const browser = new BrowserController({ headless: !options.visible });
 	const tools = createBrowserTools(browser);
@@ -104,7 +69,7 @@ export async function runInteractive(options: ReplOptions = {}): Promise<void> {
 	const model = resolveModel(options);
 	const memory = readMemory();
 
-	// Handle session: clear if --new, otherwise load previous
+	// Handle session
 	if (options.new) {
 		clearSession();
 	}
@@ -119,102 +84,18 @@ export async function runInteractive(options: ReplOptions = {}): Promise<void> {
 		},
 	});
 
-	// -- TUI Setup --
-	const terminal = new ProcessTerminal();
-	const ui = new TUI(terminal, true);
+	// Collect response text, render as markdown at end
+	let responseText = "";
+	let hasError = false;
 
-	// Header
-	const header = new Text(
-		chalk.bold.cyan("  x-lens") + chalk.dim("  personal agent") + chalk.dim("  (ctrl+c to quit)"),
-		0, 0,
-	);
-
-	// Chat area — holds all messages
-	const chatContainer = new Container();
-
-	// Editor for user input
-	const editor = new Editor(ui, editorTheme);
-
-	// Root layout
-	const root = new Container();
-	root.addChild(header);
-	root.addChild(chatContainer);
-	root.addChild(editor);
-	ui.addChild(root);
-	ui.setFocus(editor);
-
-	// -- Agent event handling --
 	const browserToolNames = new Set([
 		"browser_navigate", "browser_screenshot", "browser_click",
 		"browser_type", "browser_scroll",
 	]);
 
-	let responseText = "";
-	let currentResponseComponent: Markdown | null = null;
-	let currentLoader: Loader | null = null;
-
-	function addUserMessage(text: string) {
-		const msg = new Text(chalk.bold.green("  > ") + chalk.white(text), 0, 0);
-		chatContainer.addChild(msg);
-		ui.requestRender();
-	}
-
-	function showLoader(message: string) {
-		if (currentLoader) {
-			currentLoader.stop();
-			chatContainer.removeChild(currentLoader);
-		}
-		currentLoader = new Loader(
-			ui,
-			(s) => chalk.cyan(s),
-			(s) => chalk.dim(s),
-			message,
-		);
-		chatContainer.addChild(currentLoader);
-		ui.requestRender();
-	}
-
-	function hideLoader() {
-		if (currentLoader) {
-			currentLoader.stop();
-			chatContainer.removeChild(currentLoader);
-			currentLoader = null;
-			ui.requestRender();
-		}
-	}
-
-	function showError(message: string) {
-		const err = new Text(chalk.red("  ✗ ") + chalk.red(message), 0, 0);
-		chatContainer.addChild(err);
-		ui.requestRender();
-	}
-
-	function updateResponseMarkdown() {
-		if (!currentResponseComponent) {
-			currentResponseComponent = new Markdown(responseText, 1, 0, markdownTheme);
-			chatContainer.addChild(currentResponseComponent);
-		} else {
-			currentResponseComponent.setText(responseText);
-		}
-		ui.requestRender();
-	}
-
-	// Restore previous session messages in the chat UI
-	for (const entry of previousSession) {
-		if (entry.role === "user") {
-			addUserMessage(entry.content);
-		} else if (entry.role === "assistant") {
-			const md = new Markdown(entry.content, 1, 0, markdownTheme);
-			chatContainer.addChild(md);
-			chatContainer.addChild(new Text("", 0, 0));
-		}
-	}
-
 	agent.subscribe((event) => {
 		if (event.type === "message_update" && event.assistantMessageEvent.type === "text_delta") {
-			hideLoader();
 			responseText += event.assistantMessageEvent.delta;
-			updateResponseMarkdown();
 			status.addUpdate({
 				type: "message",
 				timestamp: Date.now(),
@@ -222,39 +103,36 @@ export async function runInteractive(options: ReplOptions = {}): Promise<void> {
 			});
 		}
 		if (event.type === "tool_execution_start") {
-			showLoader(event.toolName);
+			console.log(renderToolUsage(event.toolName));
 			status.addUpdate({
 				type: "tool",
 				timestamp: Date.now(),
 				content: `${event.toolName} ${JSON.stringify(event.args)}`,
 			});
 		}
-		if (event.type === "tool_execution_end") {
-			hideLoader();
-			if (browserToolNames.has(event.toolName)) {
-				const result = event.result as any;
-				const content = result?.content;
-				if (Array.isArray(content)) {
-					const img = content.find((c: any) => c.type === "image");
-					if (img) {
-						status.addUpdate({
-							type: "screenshot",
-							timestamp: Date.now(),
-							content: `Screenshot from ${event.toolName}`,
-							screenshot: img.data,
-						});
-					}
+		if (event.type === "tool_execution_end" && browserToolNames.has(event.toolName)) {
+			const result = event.result as any;
+			const content = result?.content;
+			if (Array.isArray(content)) {
+				const img = content.find((c: any) => c.type === "image");
+				if (img) {
+					status.addUpdate({
+						type: "screenshot",
+						timestamp: Date.now(),
+						content: `Screenshot from ${event.toolName}`,
+						screenshot: img.data,
+					});
 				}
 			}
 		}
 		if (event.type === "agent_end") {
-			hideLoader();
 			// Check for errors
 			if (event.messages?.length) {
 				for (const msg of event.messages) {
 					const errorMsg = (msg as any).errorMessage;
 					if (errorMsg) {
-						showError(errorMsg);
+						console.error(renderError(errorMsg));
+						hasError = true;
 						status.addUpdate({
 							type: "error",
 							timestamp: Date.now(),
@@ -263,66 +141,80 @@ export async function runInteractive(options: ReplOptions = {}): Promise<void> {
 					}
 				}
 			}
-			// Save assistant response to session
-			if (responseText) {
+			// Render response as markdown
+			if (responseText && !hasError) {
+				console.log("\n" + renderMarkdown(responseText));
 				appendToSession({
 					timestamp: new Date().toISOString(),
 					role: "assistant",
 					content: responseText,
 				});
-				chatContainer.addChild(new Text("", 0, 0));
 			}
-			// Reset for next turn
 			responseText = "";
-			currentResponseComponent = null;
-			ui.requestRender();
+			hasError = false;
 		}
 	});
 
-	// -- Editor submit handler --
-	let isProcessing = false;
+	await status.start();
 
-	editor.onSubmit = async (text: string) => {
-		const trimmed = text.trim();
-		if (!trimmed || isProcessing) return;
+	const rl = readline.createInterface({
+		input: process.stdin,
+		output: process.stdout,
+	});
 
-		if (trimmed === "exit" || trimmed === "quit") {
-			await cleanup();
-			return;
-		}
+	console.log(renderHeader());
 
-		editor.setText("");
-		editor.addToHistory(trimmed);
-		addUserMessage(trimmed);
-		appendToSession({
-			timestamp: new Date().toISOString(),
-			role: "user",
-			content: trimmed,
-		});
-		showLoader("Thinking...");
-		isProcessing = true;
+	// Show previous session summary if resuming
+	if (previousSession.length > 0) {
+		console.log(chalk.dim(`  Resuming session (${previousSession.length} messages). Use --new to start fresh.\n`));
+	}
 
-		try {
-			await agent.prompt(trimmed);
-			await agent.waitForIdle();
-		} catch (err: unknown) {
-			hideLoader();
-			const message = err instanceof Error ? err.message : String(err);
-			showError(message);
-			status.addUpdate({
-				type: "error",
-				timestamp: Date.now(),
-				content: message,
+	function prompt(): void {
+		rl.question(chalk.cyan("> "), async (input) => {
+			const trimmed = input.trim();
+
+			if (!trimmed) {
+				prompt();
+				return;
+			}
+
+			if (trimmed === "exit" || trimmed === "quit") {
+				console.log(chalk.dim("\n  Goodbye.\n"));
+				rl.close();
+				try {
+					await status.stop();
+					await browser.close();
+				} catch {
+					// ignore
+				}
+				process.exit(0);
+			}
+
+			// Save user message to session
+			appendToSession({
+				timestamp: new Date().toISOString(),
+				role: "user",
+				content: trimmed,
 			});
-		}
 
-		isProcessing = false;
-		ui.requestRender();
-	};
+			try {
+				await agent.prompt(trimmed);
+				await agent.waitForIdle();
+			} catch (err: unknown) {
+				const message = err instanceof Error ? err.message : String(err);
+				console.error(renderError(message));
+				status.addUpdate({
+					type: "error",
+					timestamp: Date.now(),
+					content: message,
+				});
+			}
 
-	// -- Cleanup --
-	async function cleanup() {
-		ui.stop();
+			prompt();
+		});
+	}
+
+	rl.on("close", async () => {
 		try {
 			await status.stop();
 			await browser.close();
@@ -330,9 +222,7 @@ export async function runInteractive(options: ReplOptions = {}): Promise<void> {
 			// ignore
 		}
 		process.exit(0);
-	}
+	});
 
-	// -- Start --
-	await status.start();
-	ui.start();
+	prompt();
 }

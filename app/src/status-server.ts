@@ -129,12 +129,29 @@ export class StatusServer {
       res.end(STATUS_HTML);
     });
 
-    return new Promise((resolve) => {
-      this.server!.listen(port, () => {
-        console.log(`Status page: http://localhost:${port}`);
-        resolve();
-      });
-    });
+    const maxAttempts = 10;
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      const tryPort = port + attempt;
+      try {
+        await new Promise<void>((resolve, reject) => {
+          this.server!.once("error", reject);
+          this.server!.listen(tryPort, () => {
+            this.server!.removeAllListeners("error");
+            console.log(`Status page: http://localhost:${tryPort}`);
+            resolve();
+          });
+        });
+        return;
+      } catch (err: any) {
+        if (err.code === "EADDRINUSE" && attempt < maxAttempts - 1) {
+          // Port busy, try next one
+          continue;
+        }
+        // Give up silently — status page is optional
+        this.server = null;
+        return;
+      }
+    }
   }
 
   async stop(): Promise<void> {

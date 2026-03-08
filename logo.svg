@@ -1,0 +1,59 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0f0c29"/>
+      <stop offset="50%" stop-color="#1a1a4e"/>
+      <stop offset="100%" stop-color="#24243e"/>
+    </linearGradient>
+    <linearGradient id="lens-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#00d2ff"/>
+      <stop offset="100%" stop-color="#7f7fd5"/>
+    </linearGradient>
+    <linearGradient id="x-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#e0e0e0"/>
+      <stop offset="100%" stop-color="#ffffff"/>
+    </linearGradient>
+    <filter id="glow">
+      <feGaussianBlur stdDeviation="8" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    <filter id="inner-glow">
+      <feGaussianBlur stdDeviation="4" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <!-- Background -->
+  <rect width="512" height="512" rx="96" fill="url(#bg)"/>
+
+  <!-- Outer lens ring -->
+  <circle cx="256" cy="240" r="140" fill="none" stroke="url(#lens-grad)" stroke-width="6" opacity="0.3"/>
+
+  <!-- Main lens circle -->
+  <circle cx="256" cy="240" r="110" fill="none" stroke="url(#lens-grad)" stroke-width="10" filter="url(#glow)"/>
+
+  <!-- Lens flare / highlight -->
+  <ellipse cx="220" cy="195" rx="30" ry="12" fill="#ffffff" opacity="0.12" transform="rotate(-30 220 195)"/>
+
+  <!-- Inner iris ring -->
+  <circle cx="256" cy="240" r="55" fill="none" stroke="url(#lens-grad)" stroke-width="4" opacity="0.5"/>
+
+  <!-- Pupil / center dot -->
+  <circle cx="256" cy="240" r="18" fill="url(#lens-grad)" filter="url(#inner-glow)" opacity="0.9"/>
+  <circle cx="256" cy="240" r="6" fill="#ffffff" opacity="0.8"/>
+
+  <!-- X letter - bold strokes through the lens -->
+  <g filter="url(#glow)">
+    <line x1="175" y1="155" x2="337" y2="325" stroke="url(#x-grad)" stroke-width="22" stroke-linecap="round"/>
+    <line x1="337" y1="155" x2="175" y2="325" stroke="url(#x-grad)" stroke-width="22" stroke-linecap="round"/>
+  </g>
+
+  <!-- Text: "lens" below -->
+  <text x="256" y="430" text-anchor="middle" font-family="SF Mono, Fira Code, Cascadia Code, monospace" font-size="56" font-weight="300" fill="url(#lens-grad)" letter-spacing="12">lens</text>
+</svg>
