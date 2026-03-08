@@ -4,6 +4,7 @@ import { getModel } from "@mariozechner/pi-ai";
 import { BrowserController } from "./browser.js";
 import { createBrowserTools } from "./tools.js";
 import { loadSkills, formatSkillsForPrompt } from "./skills.js";
+import { StatusServer } from "./status-server.js";
 import { join } from "node:path";
 
 export interface ReplOptions {
@@ -44,6 +45,7 @@ export async function runInteractive(options: ReplOptions = {}): Promise<void> {
   const tools = createBrowserTools(browser);
   const skillsDir = options.skillsDir || join(process.cwd(), "skills");
   const skills = loadSkills(skillsDir);
+  const status = new StatusServer();
 
   const model = getModel("amazon-bedrock", (options.model || "anthropic.claude-sonnet-4-20250514-v1:0") as any);
 
@@ -56,17 +58,49 @@ export async function runInteractive(options: ReplOptions = {}): Promise<void> {
     },
   });
 
+  const browserToolNames = new Set([
+    "browser_navigate", "browser_screenshot", "browser_click",
+    "browser_type", "browser_scroll",
+  ]);
+
   agent.subscribe((event) => {
     if (event.type === "message_update" && event.assistantMessageEvent.type === "text_delta") {
       process.stdout.write(event.assistantMessageEvent.delta);
+      status.addUpdate({
+        type: "message",
+        timestamp: Date.now(),
+        content: event.assistantMessageEvent.delta,
+      });
     }
     if (event.type === "tool_execution_start") {
       process.stderr.write(`\n[tool] ${event.toolName}...\n`);
+      status.addUpdate({
+        type: "tool",
+        timestamp: Date.now(),
+        content: `${event.toolName} ${JSON.stringify(event.args)}`,
+      });
+    }
+    if (event.type === "tool_execution_end" && browserToolNames.has(event.toolName)) {
+      const result = event.result as any;
+      const content = result?.content;
+      if (Array.isArray(content)) {
+        const img = content.find((c: any) => c.type === "image");
+        if (img) {
+          status.addUpdate({
+            type: "screenshot",
+            timestamp: Date.now(),
+            content: `Screenshot from ${event.toolName}`,
+            screenshot: img.data,
+          });
+        }
+      }
     }
     if (event.type === "agent_end") {
       process.stdout.write("\n");
     }
   });
+
+  await status.start();
 
   const rl = readline.createInterface({
     input: process.stdin,
@@ -89,6 +123,7 @@ export async function runInteractive(options: ReplOptions = {}): Promise<void> {
         console.log("Goodbye.");
         rl.close();
         try {
+          await status.stop();
           await browser.close();
         } catch {
           // ignore close errors
@@ -102,6 +137,11 @@ export async function runInteractive(options: ReplOptions = {}): Promise<void> {
       } catch (err: unknown) {
         const message = err instanceof Error ? err.message : String(err);
         console.error(`\n[error] ${message}\n`);
+        status.addUpdate({
+          type: "error",
+          timestamp: Date.now(),
+          content: message,
+        });
       }
 
       prompt();
@@ -111,6 +151,7 @@ export async function runInteractive(options: ReplOptions = {}): Promise<void> {
   // Handle Ctrl+C gracefully
   rl.on("close", async () => {
     try {
+      await status.stop();
       await browser.close();
     } catch {
       // ignore close errors

@@ -3,6 +3,7 @@ import { getModel } from "@mariozechner/pi-ai";
 import { BrowserController } from "./browser.js";
 import { createBrowserTools } from "./tools.js";
 import { loadSkills, formatSkillsForPrompt } from "./skills.js";
+import { StatusServer } from "./status-server.js";
 import { join } from "node:path";
 
 export interface RunOptions {
@@ -43,6 +44,7 @@ export async function runOnce(prompt: string, options: RunOptions = {}): Promise
   const tools = createBrowserTools(browser);
   const skillsDir = options.skillsDir || join(process.cwd(), "skills");
   const skills = loadSkills(skillsDir);
+  const status = new StatusServer();
 
   const model = getModel("amazon-bedrock", (options.model || "anthropic.claude-sonnet-4-20250514-v1:0") as any);
 
@@ -55,12 +57,42 @@ export async function runOnce(prompt: string, options: RunOptions = {}): Promise
     },
   });
 
+  const browserToolNames = new Set([
+    "browser_navigate", "browser_screenshot", "browser_click",
+    "browser_type", "browser_scroll",
+  ]);
+
   agent.subscribe((event) => {
     if (event.type === "message_update" && event.assistantMessageEvent.type === "text_delta") {
       process.stdout.write(event.assistantMessageEvent.delta);
+      status.addUpdate({
+        type: "message",
+        timestamp: Date.now(),
+        content: event.assistantMessageEvent.delta,
+      });
     }
     if (event.type === "tool_execution_start") {
       process.stderr.write(`\n[tool] ${event.toolName}...\n`);
+      status.addUpdate({
+        type: "tool",
+        timestamp: Date.now(),
+        content: `${event.toolName} ${JSON.stringify(event.args)}`,
+      });
+    }
+    if (event.type === "tool_execution_end" && browserToolNames.has(event.toolName)) {
+      const result = event.result as any;
+      const content = result?.content;
+      if (Array.isArray(content)) {
+        const img = content.find((c: any) => c.type === "image");
+        if (img) {
+          status.addUpdate({
+            type: "screenshot",
+            timestamp: Date.now(),
+            content: `Screenshot from ${event.toolName}`,
+            screenshot: img.data,
+          });
+        }
+      }
     }
     if (event.type === "agent_end") {
       process.stdout.write("\n");
@@ -68,14 +100,21 @@ export async function runOnce(prompt: string, options: RunOptions = {}): Promise
   });
 
   try {
+    await status.start();
     await agent.prompt(prompt);
     await agent.waitForIdle();
 
     if (agent.state.error) {
       process.stderr.write(`\n[error] ${agent.state.error}\n`);
+      status.addUpdate({
+        type: "error",
+        timestamp: Date.now(),
+        content: String(agent.state.error),
+      });
       process.exitCode = 1;
     }
   } finally {
     await browser.close();
+    await status.stop();
   }
 }
