@@ -122,6 +122,7 @@ export async function runInteractive(options: ReplOptions = {}): Promise<void> {
 	let isStreaming = false;
 	let hasError = false;
 	let aborted = false;
+	let needsRetryAfterCompaction = false;
 	let lastInputTokens = 0;
 	let turnStartTime = 0;
 
@@ -228,26 +229,10 @@ export async function runInteractive(options: ReplOptions = {}): Promise<void> {
 			if (msg.role === "assistant" && msg.usage) {
 				lastInputTokens = msg.usage.input + (msg.usage.cacheRead || 0);
 
-				// Check for overflow error — need to compact and retry
+				// Check for overflow error — flag for compaction + retry after agent_end
 				if (isContextOverflow(msg as AssistantMessage)) {
-					logCompaction("Context overflow detected! Emergency compaction...");
-					// Remove the error message from agent state
-					const messages = [...agent.state.messages] as Message[];
-					messages.pop(); // remove the error
-					agent.replaceMessages(messages);
-
-					// Compact and retry
-					compact(agent, model, logCompaction).then((result) => {
-						if (result) {
-							saveSessionMessages(agent.state.messages as Message[]);
-							logCompaction("Retrying after compaction...");
-							agent.continue();
-						}
-					}).catch((err) => {
-						console.error(renderError(`Emergency compaction failed: ${err instanceof Error ? err.message : String(err)}`));
-						agentBusy = false;
-					});
-					return; // don't proceed to normal flow
+					logCompaction("Context overflow detected! Will compact after current run ends...");
+					needsRetryAfterCompaction = true;
 				}
 			}
 		}
@@ -261,6 +246,39 @@ export async function runInteractive(options: ReplOptions = {}): Promise<void> {
 
 		// Agent finished a complete run
 		if (event.type === "agent_end") {
+			// Emergency compaction + retry: agent has stopped, safe to compact and continue
+			if (needsRetryAfterCompaction) {
+				needsRetryAfterCompaction = false;
+				responseText = "";
+				isStreaming = false;
+				hasError = false;
+
+				// Remove the overflow error message from agent state
+				const messages = [...agent.state.messages] as Message[];
+				if (messages.length > 0) {
+					const last = messages[messages.length - 1] as any;
+					if (last.role === "assistant" && last.stopReason === "error") {
+						messages.pop();
+						agent.replaceMessages(messages);
+					}
+				}
+
+				compact(agent, model, logCompaction).then((result) => {
+					if (result) {
+						saveSessionMessages(agent.state.messages as Message[]);
+						logCompaction("Retrying after compaction...");
+						agent.continue();
+					} else {
+						console.error(renderError("Compaction produced no result. Cannot retry."));
+						agentBusy = false;
+					}
+				}).catch((err) => {
+					console.error(renderError(`Emergency compaction failed: ${err instanceof Error ? err.message : String(err)}`));
+					agentBusy = false;
+				});
+				return;
+			}
+
 			// Check for errors (skip error display if user aborted)
 			if (!aborted && event.messages?.length) {
 				for (const msg of event.messages) {
@@ -279,7 +297,6 @@ export async function runInteractive(options: ReplOptions = {}): Promise<void> {
 
 			// Clear streaming indicator
 			if (isStreaming) {
-				// Move to new line after the "● Responding..." indicator
 				process.stdout.write("\r" + " ".repeat(60) + "\r");
 			}
 
