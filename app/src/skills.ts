@@ -4,14 +4,17 @@ import { join } from "node:path";
 export interface Skill {
   name: string;
   description: string;
+  source: string;
   triggers: string[];
   instructions: string;
   baseDir: string;
+  filePath: string;
 }
 
 interface SkillFrontmatter {
   name?: string;
   description?: string;
+  source?: string;
   triggers?: string[];
 }
 
@@ -29,6 +32,7 @@ function parseFrontmatter(content: string): { meta: SkillFrontmatter; body: stri
     const [, key, value] = kvMatch;
     if (key === "name") meta.name = value.trim();
     if (key === "description") meta.description = value.trim();
+    if (key === "source") meta.source = value.trim();
     if (key === "triggers") {
       const arrayMatch = value.match(/\[([^\]]*)\]/);
       if (arrayMatch) {
@@ -49,32 +53,42 @@ function loadSkillFromFile(filePath: string, baseDir: string): Skill | null {
     return {
       name: meta.name,
       description: meta.description || "",
+      source: meta.source || "",
       triggers: meta.triggers || [],
       instructions: body,
       baseDir,
+      filePath,
     };
   } catch {
     return null;
   }
 }
 
-export function loadSkills(skillsDir: string): Skill[] {
-  if (!existsSync(skillsDir)) return [];
+/**
+ * Load skills from a single directory.
+ * Supports both `skill.md` (x-lens convention) and `SKILL.md` (tradermonty convention).
+ */
+function loadSkillsFromDir(dir: string): Skill[] {
+  if (!existsSync(dir)) return [];
 
   const skills: Skill[] = [];
-  const entries = readdirSync(skillsDir);
+  const entries = readdirSync(dir);
 
   for (const entry of entries) {
-    const fullPath = join(skillsDir, entry);
+    const fullPath = join(dir, entry);
     const stat = statSync(fullPath);
 
     if (stat.isFile() && entry.endsWith(".md")) {
-      const skill = loadSkillFromFile(fullPath, skillsDir);
+      // Root-level .md file (e.g., check-email.md)
+      const skill = loadSkillFromFile(fullPath, dir);
       if (skill) skills.push(skill);
     } else if (stat.isDirectory()) {
-      const skillMd = join(fullPath, "skill.md");
-      if (existsSync(skillMd)) {
-        const skill = loadSkillFromFile(skillMd, fullPath);
+      // Folder skill — check for skill.md or SKILL.md
+      const lowercase = join(fullPath, "skill.md");
+      const uppercase = join(fullPath, "SKILL.md");
+      const skillFile = existsSync(lowercase) ? lowercase : existsSync(uppercase) ? uppercase : null;
+      if (skillFile) {
+        const skill = loadSkillFromFile(skillFile, fullPath);
         if (skill) skills.push(skill);
       }
     }
@@ -83,18 +97,62 @@ export function loadSkills(skillsDir: string): Skill[] {
   return skills;
 }
 
+/**
+ * List available personas by scanning the personas/ directory.
+ */
+export function listPersonas(projectRoot: string): string[] {
+  const personasDir = join(projectRoot, "personas");
+  if (!existsSync(personasDir)) return [];
+  return readdirSync(personasDir).filter((entry) => {
+    const skillsDir = join(personasDir, entry, "skills");
+    return existsSync(skillsDir) && statSync(skillsDir).isDirectory();
+  });
+}
+
+/**
+ * Load skills: global skills + persona-specific skills (if persona specified).
+ * Persona skills override global skills on name collision (like mom's channel pattern).
+ */
+export function loadSkills(projectRoot: string, persona?: string): Skill[] {
+  const skillMap = new Map<string, Skill>();
+
+  // Load global skills
+  const globalDir = join(projectRoot, "skills");
+  for (const skill of loadSkillsFromDir(globalDir)) {
+    skillMap.set(skill.name, skill);
+  }
+
+  // Load persona-specific skills (override globals on collision)
+  if (persona) {
+    const personaDir = join(projectRoot, "personas", persona, "skills");
+    for (const skill of loadSkillsFromDir(personaDir)) {
+      skillMap.set(skill.name, skill);
+    }
+  }
+
+  return Array.from(skillMap.values());
+}
+
+/**
+ * Format skills as a compact catalog for the system prompt.
+ * Only includes name, description, and triggers — NOT full instructions.
+ * The agent uses the skill_read tool to load full instructions on demand.
+ */
 export function formatSkillsForPrompt(skills: Skill[]): string {
   if (skills.length === 0) return "";
 
-  const lines = ["## Available Skills\n"];
+  const lines = [
+    "## Available Skills",
+    "",
+    "Use the `skill_read` tool to load a skill's full instructions before following it.",
+    "",
+  ];
+
   for (const skill of skills) {
-    lines.push(`### ${skill.name}`);
-    lines.push(`${skill.description}`);
-    if (skill.baseDir) lines.push(`Scripts directory: ${skill.baseDir}`);
-    lines.push("");
-    lines.push(skill.instructions);
-    lines.push("");
+    const triggers = skill.triggers.length > 0 ? ` (triggers: ${skill.triggers.join(", ")})` : "";
+    lines.push(`- **${skill.name}**: ${skill.description}${triggers}`);
   }
+
   return lines.join("\n");
 }
 

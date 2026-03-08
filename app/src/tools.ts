@@ -6,6 +6,7 @@ import type {
 } from "@mariozechner/pi-agent-core";
 import type { TextContent, ImageContent } from "@mariozechner/pi-ai";
 import type { BrowserController } from "./browser.js";
+import type { Skill } from "./skills.js";
 import { exec } from "node:child_process";
 
 // ---------------------------------------------------------------------------
@@ -244,6 +245,26 @@ function createMemoryAppendTool(): AgentTool {
   };
 }
 
+function createWebSearchTool(browser: BrowserController): AgentTool {
+  return {
+    name: "web_search",
+    label: "Web Search",
+    description:
+      "Search the web using Google. Returns search results with titles, URLs, and snippets. Use this instead of manually navigating to Google.",
+    parameters: Type.Object({
+      query: Type.String({ description: "The search query" }),
+    }),
+    execute: async (_toolCallId, params: any) => {
+      await browser.launch();
+      const encodedQuery = encodeURIComponent(params.query);
+      await browser.navigate(`https://www.google.com/search?q=${encodedQuery}`);
+      // Wait briefly for results to load
+      await new Promise((r) => setTimeout(r, 1500));
+      return { content: await browserResult(browser), details: undefined };
+    },
+  };
+}
+
 function createFetchTool(): AgentTool {
   return {
     name: "fetch",
@@ -294,11 +315,35 @@ function createFetchTool(): AgentTool {
   };
 }
 
+function createSkillReadTool(skills: Skill[]): AgentTool {
+  const skillMap = new Map(skills.map((s) => [s.name, s]));
+  return {
+    name: "skill_read",
+    label: "Read Skill",
+    description:
+      "Load the full instructions for a skill by name. Use this before following a skill's workflow. Returns the complete skill instructions, scripts directory, and any references.",
+    parameters: Type.Object({
+      name: Type.String({ description: "The skill name to load (e.g., 'canslim-screener')" }),
+    }),
+    execute: async (_toolCallId, params: any) => {
+      const skill = skillMap.get(params.name);
+      if (!skill) {
+        const available = [...skillMap.keys()].join(", ");
+        return textResult(`Skill "${params.name}" not found. Available skills: ${available}`);
+      }
+      const parts = [`# ${skill.name}`, `${skill.description}`, ""];
+      if (skill.baseDir) parts.push(`Scripts directory: ${skill.baseDir}`, "");
+      parts.push(skill.instructions);
+      return textResult(parts.join("\n"));
+    },
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
 
-export function createBrowserTools(browser: BrowserController): AgentTool[] {
+export function createTools(browser: BrowserController, skills: Skill[]): AgentTool[] {
   return [
     createNavigateTool(browser),
     createScreenshotTool(browser),
@@ -306,10 +351,12 @@ export function createBrowserTools(browser: BrowserController): AgentTool[] {
     createTypeTool(browser),
     createScrollTool(browser),
     createEvaluateTool(browser),
+    createWebSearchTool(browser),
     createShellTool(),
     createFetchTool(),
     createMemoryReadTool(),
     createMemoryWriteTool(),
     createMemoryAppendTool(),
+    createSkillReadTool(skills),
   ];
 }

@@ -18,6 +18,7 @@ program
     "AI provider (bedrock or anthropic)",
     process.env.X_LENS_PROVIDER || "bedrock",
   )
+  .option("--persona <persona>", "Persona to use (e.g., trader)")
   .option("--new", "Start a new session (clear conversation history)")
   .action(async (prompt, options) => {
     if (prompt) {

@@ -1,20 +1,26 @@
 import * as readline from "node:readline";
-import { Agent } from "@mariozechner/pi-agent-core";
-import { getModel } from "@mariozechner/pi-ai";
+import { Agent, type AgentEvent } from "@mariozechner/pi-agent-core";
+import { getModel, type Message } from "@mariozechner/pi-ai";
 import chalk from "chalk";
 import { BrowserController } from "./browser.js";
-import { createBrowserTools } from "./tools.js";
+import { createTools } from "./tools.js";
 import { loadSkills, formatSkillsForPrompt } from "./skills.js";
 import { StatusServer } from "./status-server.js";
 import { renderMarkdown, renderError, renderToolUsage, renderHeader } from "./render.js";
 import { join } from "node:path";
-import { readMemory, appendToSession, loadSession, clearSession } from "./memory.js";
+import {
+	readMemory,
+	loadSessionMessages,
+	appendSessionMessage,
+	saveSessionMessages,
+	clearSession,
+} from "./memory.js";
 
 export interface ReplOptions {
 	visible?: boolean;
 	model?: string;
 	provider?: string;
-	skillsDir?: string;
+	persona?: string;
 	new?: boolean;
 }
 
@@ -26,12 +32,23 @@ function resolveModel(options: ReplOptions) {
 	return getModel("amazon-bedrock", (options.model || "anthropic.claude-sonnet-4-20250514-v1:0") as any);
 }
 
+/**
+ * Convert AgentMessages to LLM-compatible messages.
+ * Mirrors mom's convertToLlm — keeps user/assistant/toolResult, strips custom types.
+ */
+function convertToLlm(messages: Message[]): Message[] {
+	return messages.filter(
+		(m) => m.role === "user" || m.role === "assistant" || m.role === "toolResult",
+	);
+}
+
 function buildSystemPrompt(skills: ReturnType<typeof loadSkills>, memory: string): string {
 	const skillsSection = formatSkillsForPrompt(skills);
 
 	return `You are x-lens, a personal AI agent that helps users accomplish tasks.
 
 You have access to a browser you can control, a shell for running commands, and an HTTP fetch tool.
+You have access to previous conversation context including tool results from prior turns.
 
 When using the browser:
 1. Navigate to the relevant page
@@ -61,9 +78,9 @@ ${skillsSection}`;
 
 export async function runInteractive(options: ReplOptions = {}): Promise<void> {
 	const browser = new BrowserController({ headless: !options.visible });
-	const tools = createBrowserTools(browser);
-	const skillsDir = options.skillsDir || join(process.cwd(), "skills");
-	const skills = loadSkills(skillsDir);
+	const projectRoot = join(process.cwd(), "..");
+	const skills = loadSkills(projectRoot, options.persona);
+	const tools = createTools(browser, skills);
 	const status = new StatusServer();
 
 	const model = resolveModel(options);
@@ -73,7 +90,6 @@ export async function runInteractive(options: ReplOptions = {}): Promise<void> {
 	if (options.new) {
 		clearSession();
 	}
-	const previousSession = loadSession();
 
 	const agent = new Agent({
 		initialState: {
@@ -82,9 +98,20 @@ export async function runInteractive(options: ReplOptions = {}): Promise<void> {
 			thinkingLevel: "off",
 			tools,
 		},
+		convertToLlm,
+		steeringMode: "one-at-a-time",
+		followUpMode: "one-at-a-time",
 	});
 
-	// Collect response text, render as markdown at end
+	// Restore previous session — load full AgentMessages into the agent
+	// This is the same pattern mom uses: sessionManager.buildSessionContext() + agent.replaceMessages()
+	const previousMessages = loadSessionMessages();
+	if (previousMessages.length > 0) {
+		agent.replaceMessages(previousMessages);
+	}
+
+	// Track agent state
+	let agentBusy = false;
 	let responseText = "";
 	let hasError = false;
 
@@ -93,7 +120,9 @@ export async function runInteractive(options: ReplOptions = {}): Promise<void> {
 		"browser_type", "browser_scroll",
 	]);
 
-	agent.subscribe((event) => {
+	// Subscribe to events ONCE (mom pattern — subscribe once, mutable run state)
+	agent.subscribe((event: AgentEvent) => {
+		// Collect streaming text
 		if (event.type === "message_update" && event.assistantMessageEvent.type === "text_delta") {
 			responseText += event.assistantMessageEvent.delta;
 			status.addUpdate({
@@ -102,6 +131,8 @@ export async function runInteractive(options: ReplOptions = {}): Promise<void> {
 				content: event.assistantMessageEvent.delta,
 			});
 		}
+
+		// Tool execution logging
 		if (event.type === "tool_execution_start") {
 			console.log(renderToolUsage(event.toolName));
 			status.addUpdate({
@@ -110,6 +141,8 @@ export async function runInteractive(options: ReplOptions = {}): Promise<void> {
 				content: `${event.toolName} ${JSON.stringify(event.args)}`,
 			});
 		}
+
+		// Browser screenshots for status page
 		if (event.type === "tool_execution_end" && browserToolNames.has(event.toolName)) {
 			const result = event.result as any;
 			const content = result?.content;
@@ -125,6 +158,13 @@ export async function runInteractive(options: ReplOptions = {}): Promise<void> {
 				}
 			}
 		}
+
+		// Persist messages as they complete (like mom's session manager)
+		if (event.type === "message_end") {
+			appendSessionMessage(event.message as Message);
+		}
+
+		// Agent finished a complete run
 		if (event.type === "agent_end") {
 			// Check for errors
 			if (event.messages?.length) {
@@ -141,17 +181,15 @@ export async function runInteractive(options: ReplOptions = {}): Promise<void> {
 					}
 				}
 			}
+
 			// Render response as markdown
 			if (responseText && !hasError) {
 				console.log("\n" + renderMarkdown(responseText));
-				appendToSession({
-					timestamp: new Date().toISOString(),
-					role: "assistant",
-					content: responseText,
-				});
 			}
+
 			responseText = "";
 			hasError = false;
+			agentBusy = false;
 		}
 	});
 
@@ -164,17 +202,32 @@ export async function runInteractive(options: ReplOptions = {}): Promise<void> {
 
 	console.log(renderHeader());
 
-	// Show previous session summary if resuming
-	if (previousSession.length > 0) {
-		console.log(chalk.dim(`  Resuming session (${previousSession.length} messages). Use --new to start fresh.\n`));
+	if (previousMessages.length > 0) {
+		console.log(chalk.dim(`  Resuming session (${previousMessages.length} messages). Use --new to start fresh.\n`));
 	}
 
-	function prompt(): void {
+	// Ctrl+C: abort current run if busy, double-tap to exit
+	let pendingExit = false;
+	process.on("SIGINT", () => {
+		if (agentBusy) {
+			console.log(chalk.yellow("\n  Interrupting current task..."));
+			agent.abort();
+			return;
+		}
+		if (pendingExit) {
+			process.exit(0);
+		}
+		pendingExit = true;
+		console.log(chalk.dim("\n  Press Ctrl+C again or type 'exit' to quit.\n"));
+		setTimeout(() => { pendingExit = false; }, 2000);
+	});
+
+	function promptUser(): void {
 		rl.question(chalk.cyan("> "), async (input) => {
 			const trimmed = input.trim();
 
 			if (!trimmed) {
-				prompt();
+				promptUser();
 				return;
 			}
 
@@ -190,15 +243,26 @@ export async function runInteractive(options: ReplOptions = {}): Promise<void> {
 				process.exit(0);
 			}
 
-			// Save user message to session
-			appendToSession({
-				timestamp: new Date().toISOString(),
+			// Build proper UserMessage (same structure mom uses)
+			const userMessage: Message = {
 				role: "user",
-				content: trimmed,
-			});
+				content: [{ type: "text", text: trimmed }],
+				timestamp: Date.now(),
+			};
+
+			if (agentBusy) {
+				// Agent is mid-task — steer it with new instruction
+				// This is exactly how mom handles new Slack messages while agent is working
+				console.log(chalk.yellow("  Steering agent with new instruction..."));
+				agent.steer(userMessage);
+				promptUser();
+				return;
+			}
+
+			agentBusy = true;
 
 			try {
-				await agent.prompt(trimmed);
+				await agent.prompt(userMessage);
 				await agent.waitForIdle();
 			} catch (err: unknown) {
 				const message = err instanceof Error ? err.message : String(err);
@@ -208,9 +272,10 @@ export async function runInteractive(options: ReplOptions = {}): Promise<void> {
 					timestamp: Date.now(),
 					content: message,
 				});
+				agentBusy = false;
 			}
 
-			prompt();
+			promptUser();
 		});
 	}
 
@@ -224,5 +289,5 @@ export async function runInteractive(options: ReplOptions = {}): Promise<void> {
 		process.exit(0);
 	});
 
-	prompt();
+	promptUser();
 }

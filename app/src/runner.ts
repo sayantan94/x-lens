@@ -1,7 +1,7 @@
-import { Agent } from "@mariozechner/pi-agent-core";
-import { getModel } from "@mariozechner/pi-ai";
+import { Agent, type AgentEvent } from "@mariozechner/pi-agent-core";
+import { getModel, type Message } from "@mariozechner/pi-ai";
 import { BrowserController } from "./browser.js";
-import { createBrowserTools } from "./tools.js";
+import { createTools } from "./tools.js";
 import { loadSkills, formatSkillsForPrompt } from "./skills.js";
 import { StatusServer } from "./status-server.js";
 import { renderMarkdown, renderError, renderToolUsage } from "./render.js";
@@ -12,7 +12,7 @@ export interface RunOptions {
 	visible?: boolean;
 	model?: string;
 	provider?: string;
-	skillsDir?: string;
+	persona?: string;
 }
 
 function resolveModel(options: RunOptions) {
@@ -21,6 +21,12 @@ function resolveModel(options: RunOptions) {
 		return getModel("anthropic", (options.model || "claude-sonnet-4-20250514") as any);
 	}
 	return getModel("amazon-bedrock", (options.model || "anthropic.claude-sonnet-4-20250514-v1:0") as any);
+}
+
+function convertToLlm(messages: Message[]): Message[] {
+	return messages.filter(
+		(m) => m.role === "user" || m.role === "assistant" || m.role === "toolResult",
+	);
 }
 
 function buildSystemPrompt(skills: ReturnType<typeof loadSkills>, memory: string): string {
@@ -58,13 +64,12 @@ ${skillsSection}`;
 
 export async function runOnce(prompt: string, options: RunOptions = {}): Promise<void> {
 	const browser = new BrowserController({ headless: !options.visible });
-	const tools = createBrowserTools(browser);
-	const skillsDir = options.skillsDir || join(process.cwd(), "skills");
-	const skills = loadSkills(skillsDir);
+	const projectRoot = join(process.cwd(), "..");
+	const skills = loadSkills(projectRoot, options.persona);
+	const tools = createTools(browser, skills);
 	const status = new StatusServer();
 
 	const model = resolveModel(options);
-
 	const memory = readMemory();
 
 	const agent = new Agent({
@@ -74,6 +79,7 @@ export async function runOnce(prompt: string, options: RunOptions = {}): Promise
 			thinkingLevel: "off",
 			tools,
 		},
+		convertToLlm,
 	});
 
 	const browserToolNames = new Set([
@@ -84,7 +90,7 @@ export async function runOnce(prompt: string, options: RunOptions = {}): Promise
 	let responseText = "";
 	let hasError = false;
 
-	agent.subscribe((event) => {
+	agent.subscribe((event: AgentEvent) => {
 		if (event.type === "message_update" && event.assistantMessageEvent.type === "text_delta") {
 			responseText += event.assistantMessageEvent.delta;
 			status.addUpdate({
@@ -140,7 +146,14 @@ export async function runOnce(prompt: string, options: RunOptions = {}): Promise
 
 	try {
 		await status.start();
-		await agent.prompt(prompt);
+
+		const userMessage: Message = {
+			role: "user",
+			content: [{ type: "text", text: prompt }],
+			timestamp: Date.now(),
+		};
+
+		await agent.prompt(userMessage);
 		await agent.waitForIdle();
 
 		if (hasError) {

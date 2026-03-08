@@ -1,6 +1,7 @@
 ---
 name: screenshot-page
 description: Take a screenshot of a webpage and save it
+source: x-lens
 triggers: [screenshot, capture, save page, snapshot]
 ---
 

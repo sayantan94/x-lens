@@ -25,8 +25,8 @@ const {
   writeMemory,
   appendMemory,
   getMemoryPath,
-  loadSession,
-  appendToSession,
+  loadSessionMessages,
+  appendSessionMessage,
   clearSession,
   getSessionPath,
 } = await import("../memory.js");
@@ -91,46 +91,46 @@ describe("session persistence", () => {
     rmSync(TEST_HOME, { recursive: true, force: true });
   });
 
-  describe("loadSession", () => {
+  describe("loadSessionMessages", () => {
     it("should return empty array when no session file exists", () => {
-      expect(loadSession()).toEqual([]);
+      expect(loadSessionMessages()).toEqual([]);
     });
   });
 
-  describe("appendToSession / loadSession roundtrip", () => {
-    it("should save and load session entries", () => {
-      const entry1 = {
-        timestamp: "2025-01-01T00:00:00.000Z",
+  describe("appendSessionMessage / loadSessionMessages roundtrip", () => {
+    it("should save and load full AgentMessages", () => {
+      const msg1 = {
         role: "user" as const,
-        content: "Hello",
+        content: [{ type: "text" as const, text: "Hello" }],
+        timestamp: Date.now(),
       };
-      const entry2 = {
-        timestamp: "2025-01-01T00:00:01.000Z",
-        role: "assistant" as const,
-        content: "Hi there!",
+      const msg2 = {
+        role: "user" as const,
+        content: [{ type: "text" as const, text: "World" }],
+        timestamp: Date.now() + 1000,
       };
 
-      appendToSession(entry1);
-      appendToSession(entry2);
+      appendSessionMessage(msg1);
+      appendSessionMessage(msg2);
 
-      const loaded = loadSession();
+      const loaded = loadSessionMessages();
       expect(loaded).toHaveLength(2);
-      expect(loaded[0]).toEqual(entry1);
-      expect(loaded[1]).toEqual(entry2);
+      expect(loaded[0]).toEqual(msg1);
+      expect(loaded[1]).toEqual(msg2);
     });
   });
 
   describe("clearSession", () => {
-    it("should clear all session entries", () => {
-      appendToSession({
-        timestamp: "2025-01-01T00:00:00.000Z",
+    it("should clear all session messages", () => {
+      appendSessionMessage({
         role: "user",
-        content: "Hello",
+        content: [{ type: "text", text: "Hello" }],
+        timestamp: Date.now(),
       });
-      expect(loadSession()).toHaveLength(1);
+      expect(loadSessionMessages()).toHaveLength(1);
 
       clearSession();
-      expect(loadSession()).toEqual([]);
+      expect(loadSessionMessages()).toEqual([]);
     });
   });
 

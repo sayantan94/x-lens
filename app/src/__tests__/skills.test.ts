@@ -1,13 +1,19 @@
 import { describe, it, expect } from "vitest";
-import { loadSkills, formatSkillsForPrompt, formatSkillsForMatching } from "../skills.js";
+import { loadSkills, listPersonas, formatSkillsForPrompt, formatSkillsForMatching } from "../skills.js";
 import { mkdtempSync, writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
+function makeProjectRoot(): string {
+  const root = mkdtempSync(join(tmpdir(), "xlens-"));
+  mkdirSync(join(root, "skills"));
+  return root;
+}
+
 describe("loadSkills", () => {
-  it("should load a single markdown skill", () => {
-    const dir = mkdtempSync(join(tmpdir(), "skills-"));
-    writeFileSync(join(dir, "check-email.md"), `---
+  it("should load a single markdown skill from global skills/", () => {
+    const root = makeProjectRoot();
+    writeFileSync(join(root, "skills", "check-email.md"), `---
 name: check-email
 description: Check email for urgent messages
 triggers: [email, gmail, inbox]
@@ -17,7 +23,7 @@ triggers: [email, gmail, inbox]
 1. Open gmail.com
 2. Check for unread
 `);
-    const skills = loadSkills(dir);
+    const skills = loadSkills(root);
     expect(skills).toHaveLength(1);
     expect(skills[0].name).toBe("check-email");
     expect(skills[0].description).toBe("Check email for urgent messages");
@@ -25,8 +31,8 @@ triggers: [email, gmail, inbox]
   });
 
   it("should load a folder skill with skill.md", () => {
-    const dir = mkdtempSync(join(tmpdir(), "skills-"));
-    const skillDir = join(dir, "deploy-site");
+    const root = makeProjectRoot();
+    const skillDir = join(root, "skills", "deploy-site");
     mkdirSync(skillDir);
     writeFileSync(join(skillDir, "skill.md"), `---
 name: deploy-site
@@ -38,10 +44,28 @@ triggers: [deploy, release]
 1. Run ./deploy.sh
 `);
     writeFileSync(join(skillDir, "deploy.sh"), "#!/bin/bash\necho deployed");
-    const skills = loadSkills(dir);
+    const skills = loadSkills(root);
     expect(skills).toHaveLength(1);
     expect(skills[0].name).toBe("deploy-site");
     expect(skills[0].baseDir).toBe(skillDir);
+  });
+
+  it("should load a folder skill with SKILL.md (uppercase)", () => {
+    const root = makeProjectRoot();
+    const skillDir = join(root, "skills", "vcp-screener");
+    mkdirSync(skillDir);
+    writeFileSync(join(skillDir, "SKILL.md"), `---
+name: vcp-screener
+description: VCP pattern screener
+triggers: [vcp, volatility contraction]
+---
+
+## Instructions
+Run the screener.
+`);
+    const skills = loadSkills(root);
+    expect(skills).toHaveLength(1);
+    expect(skills[0].name).toBe("vcp-screener");
   });
 
   it("should return empty array for missing directory", () => {
@@ -50,22 +74,112 @@ triggers: [deploy, release]
   });
 
   it("should skip files without name in frontmatter", () => {
-    const dir = mkdtempSync(join(tmpdir(), "skills-"));
-    writeFileSync(join(dir, "bad.md"), "# No frontmatter\nJust text");
-    const skills = loadSkills(dir);
+    const root = makeProjectRoot();
+    writeFileSync(join(root, "skills", "bad.md"), "# No frontmatter\nJust text");
+    const skills = loadSkills(root);
     expect(skills).toHaveLength(0);
+  });
+
+  it("should load persona skills alongside global skills", () => {
+    const root = makeProjectRoot();
+    // Global skill
+    writeFileSync(join(root, "skills", "email.md"), `---
+name: check-email
+description: Check email
+triggers: [email]
+---
+Open gmail.
+`);
+    // Persona skill
+    mkdirSync(join(root, "personas", "trader", "skills", "stock"), { recursive: true });
+    writeFileSync(join(root, "personas", "trader", "skills", "stock", "skill.md"), `---
+name: stock-analysis
+description: Analyze stocks
+triggers: [stock]
+---
+Analyze the stock.
+`);
+    const skills = loadSkills(root, "trader");
+    expect(skills).toHaveLength(2);
+    const names = skills.map((s) => s.name).sort();
+    expect(names).toEqual(["check-email", "stock-analysis"]);
+  });
+
+  it("should let persona skills override global skills on name collision", () => {
+    const root = makeProjectRoot();
+    // Global skill
+    const globalDir = join(root, "skills", "screener");
+    mkdirSync(globalDir);
+    writeFileSync(join(globalDir, "skill.md"), `---
+name: screener
+description: Basic screener
+triggers: [screen]
+---
+Basic version.
+`);
+    // Persona skill with same name
+    mkdirSync(join(root, "personas", "trader", "skills", "screener"), { recursive: true });
+    writeFileSync(join(root, "personas", "trader", "skills", "screener", "skill.md"), `---
+name: screener
+description: Advanced trader screener
+triggers: [screen, scan]
+---
+Advanced version.
+`);
+    const skills = loadSkills(root, "trader");
+    expect(skills).toHaveLength(1);
+    expect(skills[0].description).toBe("Advanced trader screener");
+  });
+
+  it("should load only global skills when no persona specified", () => {
+    const root = makeProjectRoot();
+    writeFileSync(join(root, "skills", "email.md"), `---
+name: check-email
+description: Check email
+triggers: [email]
+---
+Open gmail.
+`);
+    mkdirSync(join(root, "personas", "trader", "skills", "stock"), { recursive: true });
+    writeFileSync(join(root, "personas", "trader", "skills", "stock", "skill.md"), `---
+name: stock-analysis
+description: Analyze stocks
+triggers: [stock]
+---
+Analyze.
+`);
+    const skills = loadSkills(root);
+    expect(skills).toHaveLength(1);
+    expect(skills[0].name).toBe("check-email");
+  });
+});
+
+describe("listPersonas", () => {
+  it("should list available personas", () => {
+    const root = makeProjectRoot();
+    mkdirSync(join(root, "personas", "trader", "skills"), { recursive: true });
+    mkdirSync(join(root, "personas", "researcher", "skills"), { recursive: true });
+    const personas = listPersonas(root);
+    expect(personas.sort()).toEqual(["researcher", "trader"]);
+  });
+
+  it("should return empty for missing personas dir", () => {
+    const root = makeProjectRoot();
+    expect(listPersonas(root)).toEqual([]);
   });
 });
 
 describe("formatSkillsForPrompt", () => {
   it("should format skills into prompt text", () => {
     const skills = [
-      { name: "test", description: "A test skill", triggers: ["test"], instructions: "Do the thing", baseDir: "/tmp" },
+      { name: "test", description: "A test skill", source: "", triggers: ["test"], instructions: "Do the thing", baseDir: "/tmp", filePath: "/tmp/skill.md" },
     ];
     const result = formatSkillsForPrompt(skills);
-    expect(result).toContain("### test");
+    expect(result).toContain("**test**");
     expect(result).toContain("A test skill");
-    expect(result).toContain("Do the thing");
+    expect(result).toContain("skill_read");
+    // Full instructions are NOT inlined anymore (lazy loaded via skill_read tool)
+    expect(result).not.toContain("Do the thing");
   });
 
   it("should return empty string for no skills", () => {
@@ -76,7 +190,7 @@ describe("formatSkillsForPrompt", () => {
 describe("formatSkillsForMatching", () => {
   it("should format skills for NLP matching", () => {
     const skills = [
-      { name: "email", description: "Check email", triggers: ["email", "inbox"], instructions: "", baseDir: "" },
+      { name: "email", description: "Check email", source: "", triggers: ["email", "inbox"], instructions: "", baseDir: "", filePath: "" },
     ];
     const result = formatSkillsForMatching(skills);
     expect(result).toContain("email");
