@@ -98,33 +98,34 @@ function loadSkillsFromDir(dir: string): Skill[] {
 }
 
 /**
- * List available personas by scanning the personas/ directory.
+ * List available personas by scanning skills/ for non-global directories.
  */
 export function listPersonas(projectRoot: string): string[] {
-  const personasDir = join(projectRoot, "personas");
-  if (!existsSync(personasDir)) return [];
-  return readdirSync(personasDir).filter((entry) => {
-    const skillsDir = join(personasDir, entry, "skills");
-    return existsSync(skillsDir) && statSync(skillsDir).isDirectory();
+  const skillsRoot = join(projectRoot, "skills");
+  if (!existsSync(skillsRoot)) return [];
+  return readdirSync(skillsRoot).filter((entry) => {
+    if (entry === "global") return false;
+    const dir = join(skillsRoot, entry);
+    return existsSync(dir) && statSync(dir).isDirectory();
   });
 }
 
 /**
- * Load skills: global skills + persona-specific skills (if persona specified).
- * Persona skills override global skills on name collision (like mom's channel pattern).
+ * Load skills: skills/global/ + skills/<persona>/ (if persona specified).
+ * Persona skills override global skills on name collision.
  */
 export function loadSkills(projectRoot: string, persona?: string): Skill[] {
   const skillMap = new Map<string, Skill>();
 
   // Load global skills
-  const globalDir = join(projectRoot, "skills");
+  const globalDir = join(projectRoot, "skills", "global");
   for (const skill of loadSkillsFromDir(globalDir)) {
     skillMap.set(skill.name, skill);
   }
 
   // Load persona-specific skills (override globals on collision)
   if (persona) {
-    const personaDir = join(projectRoot, "personas", persona, "skills");
+    const personaDir = join(projectRoot, "skills", persona);
     for (const skill of loadSkillsFromDir(personaDir)) {
       skillMap.set(skill.name, skill);
     }

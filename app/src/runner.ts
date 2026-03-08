@@ -5,7 +5,6 @@ import { createTools } from "./tools.js";
 import { loadSkills, formatSkillsForPrompt } from "./skills.js";
 import { StatusServer } from "./status-server.js";
 import { renderMarkdown, renderError, renderToolStart, renderToolEnd } from "./render.js";
-import { join } from "node:path";
 import { readMemory } from "./memory.js";
 
 export interface RunOptions {
@@ -70,7 +69,7 @@ ${skillsSection}`;
 
 export async function runOnce(prompt: string, options: RunOptions = {}): Promise<void> {
 	const browser = new BrowserController({ headless: !options.visible });
-	const projectRoot = join(process.cwd(), "..");
+	const projectRoot = new URL("../..", import.meta.url).pathname;
 	const skills = loadSkills(projectRoot, options.persona);
 	const tools = createTools(browser, skills);
 	const status = new StatusServer();

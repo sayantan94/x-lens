@@ -6,7 +6,6 @@ const marked = new Marked(markedTerminal() as any);
 
 export function renderMarkdown(text: string): string {
 	const rendered = marked.parse(text) as string;
-	// marked-terminal adds a trailing newline, trim it
 	return rendered.trimEnd();
 }
 
@@ -37,6 +36,19 @@ export function renderToolEnd(toolName: string, args: Record<string, unknown>, d
 	return header;
 }
 
+export function renderResponseStart(): string {
+	const line = chalk.dim("  ─".repeat(30));
+	return `\n${line}\n`;
+}
+
+export function renderResponseEnd(durationMs: number, inputTokens: number): string {
+	const parts: string[] = [];
+	if (durationMs > 0) parts.push(`${(durationMs / 1000).toFixed(1)}s`);
+	if (inputTokens > 0) parts.push(`${(inputTokens / 1000).toFixed(0)}K tokens`);
+	if (parts.length === 0) return "";
+	return chalk.dim(`\n  ${parts.join(" · ")}\n`);
+}
+
 export function renderHeader(): string {
 	return [
 		"",
@@ -48,12 +60,16 @@ export function renderHeader(): string {
 	].join("\n");
 }
 
+/** Render a text delta for live streaming to the terminal */
+export function renderStreamDelta(delta: string): string {
+	return delta;
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
 function formatToolLabel(toolName: string, args: Record<string, unknown>): string {
-	// Show a human-readable label based on tool + key arg
 	switch (toolName) {
 		case "browser_navigate":
 			return `Navigate → ${truncate(String(args.url || ""), 80)}`;
@@ -87,11 +103,10 @@ function formatToolLabel(toolName: string, args: Record<string, unknown>): strin
 }
 
 function formatArgsPreview(args: Record<string, unknown>): string {
-	// For shell commands, show the full command (it's the most useful info)
 	if (args.command && typeof args.command === "string") {
 		const cmd = args.command;
 		if (cmd.length > 120) return truncate(cmd, 120);
-		return "";  // already shown in label
+		return "";
 	}
 	return "";
 }
@@ -99,7 +114,6 @@ function formatArgsPreview(args: Record<string, unknown>): string {
 function extractResultPreview(result: unknown, isError: boolean): string {
 	if (!result) return "";
 
-	// AgentToolResult has { content: [{type: "text", text: "..."}] }
 	const content = (result as any)?.content;
 	if (Array.isArray(content)) {
 		const textParts: string[] = [];
@@ -113,7 +127,6 @@ function extractResultPreview(result: unknown, isError: boolean): string {
 		const fullText = textParts.join(" | ");
 		if (!fullText) return "";
 
-		// For errors show more, for success show a brief preview
 		const limit = isError ? 200 : 120;
 		return truncate(fullText.replace(/\n/g, " ↵ "), limit);
 	}

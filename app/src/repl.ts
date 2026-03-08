@@ -6,8 +6,7 @@ import { BrowserController } from "./browser.js";
 import { createTools } from "./tools.js";
 import { loadSkills, formatSkillsForPrompt } from "./skills.js";
 import { StatusServer } from "./status-server.js";
-import { renderMarkdown, renderError, renderToolStart, renderToolEnd, renderHeader } from "./render.js";
-import { join } from "node:path";
+import { renderMarkdown, renderError, renderToolStart, renderToolEnd, renderHeader, renderResponseStart, renderResponseEnd } from "./render.js";
 import {
 	readMemory,
 	loadSessionMessages,
@@ -85,7 +84,7 @@ ${skillsSection}`;
 
 export async function runInteractive(options: ReplOptions = {}): Promise<void> {
 	const browser = new BrowserController({ headless: !options.visible });
-	const projectRoot = join(process.cwd(), "..");
+	const projectRoot = new URL("../..", import.meta.url).pathname;
 	const skills = loadSkills(projectRoot, options.persona);
 	const tools = createTools(browser, skills);
 	const status = new StatusServer();
@@ -120,8 +119,11 @@ export async function runInteractive(options: ReplOptions = {}): Promise<void> {
 	// Track agent state
 	let agentBusy = false;
 	let responseText = "";
+	let isStreaming = false;
 	let hasError = false;
+	let aborted = false;
 	let lastInputTokens = 0;
+	let turnStartTime = 0;
 
 	const browserToolNames = new Set([
 		"browser_navigate", "browser_screenshot", "browser_click",
@@ -161,13 +163,20 @@ export async function runInteractive(options: ReplOptions = {}): Promise<void> {
 
 	// Subscribe to events ONCE (mom pattern — subscribe once, mutable run state)
 	agent.subscribe((event: AgentEvent) => {
-		// Collect streaming text
+		// Collect streaming text — show dots as indicator
 		if (event.type === "message_update" && event.assistantMessageEvent.type === "text_delta") {
-			responseText += event.assistantMessageEvent.delta;
+			const delta = event.assistantMessageEvent.delta;
+			if (!isStreaming) {
+				// First chunk — show streaming indicator
+				process.stdout.write(chalk.dim("  ● Responding... (Ctrl+C to stop)"));
+				isStreaming = true;
+			}
+			responseText += delta;
+
 			status.addUpdate({
 				type: "message",
 				timestamp: Date.now(),
-				content: event.assistantMessageEvent.delta,
+				content: delta,
 			});
 		}
 
@@ -243,10 +252,17 @@ export async function runInteractive(options: ReplOptions = {}): Promise<void> {
 			}
 		}
 
+		// Tool call after streaming — need separator
+		if (event.type === "tool_execution_start" && isStreaming) {
+			// Agent is doing more tool calls after some text — end the stream visually
+			process.stdout.write("\n\n");
+			isStreaming = false;
+		}
+
 		// Agent finished a complete run
 		if (event.type === "agent_end") {
-			// Check for errors
-			if (event.messages?.length) {
+			// Check for errors (skip error display if user aborted)
+			if (!aborted && event.messages?.length) {
 				for (const msg of event.messages) {
 					const errorMsg = (msg as any).errorMessage;
 					if (errorMsg) {
@@ -261,13 +277,27 @@ export async function runInteractive(options: ReplOptions = {}): Promise<void> {
 				}
 			}
 
-			// Render response as markdown
+			// Clear streaming indicator
+			if (isStreaming) {
+				// Move to new line after the "● Responding..." indicator
+				process.stdout.write("\r" + " ".repeat(60) + "\r");
+			}
+
+			// Show response (even partial on abort)
 			if (responseText && !hasError) {
-				console.log("\n" + renderMarkdown(responseText));
+				console.log(renderResponseStart());
+				console.log(renderMarkdown(responseText));
+				if (aborted) {
+					console.log(chalk.yellow("  ⚠ Response interrupted"));
+				}
+				const elapsed = turnStartTime > 0 ? Date.now() - turnStartTime : 0;
+				console.log(renderResponseEnd(elapsed, lastInputTokens));
 			}
 
 			responseText = "";
+			isStreaming = false;
 			hasError = false;
+			aborted = false;
 
 			// Check if we should proactively compact before next turn
 			checkAndCompact().finally(() => {
@@ -293,7 +323,8 @@ export async function runInteractive(options: ReplOptions = {}): Promise<void> {
 	let pendingExit = false;
 	process.on("SIGINT", () => {
 		if (agentBusy) {
-			console.log(chalk.yellow("\n  Interrupting current task..."));
+			console.log(chalk.yellow("\n  Interrupting..."));
+			aborted = true;
 			agent.abort();
 			return;
 		}
@@ -343,6 +374,7 @@ export async function runInteractive(options: ReplOptions = {}): Promise<void> {
 			}
 
 			agentBusy = true;
+			turnStartTime = Date.now();
 
 			try {
 				await agent.prompt(userMessage);

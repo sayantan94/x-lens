@@ -6,14 +6,14 @@ import { tmpdir } from "node:os";
 
 function makeProjectRoot(): string {
   const root = mkdtempSync(join(tmpdir(), "xlens-"));
-  mkdirSync(join(root, "skills"));
+  mkdirSync(join(root, "skills", "global"), { recursive: true });
   return root;
 }
 
 describe("loadSkills", () => {
-  it("should load a single markdown skill from global skills/", () => {
+  it("should load a single markdown skill from skills/global/", () => {
     const root = makeProjectRoot();
-    writeFileSync(join(root, "skills", "check-email.md"), `---
+    writeFileSync(join(root, "skills", "global", "check-email.md"), `---
 name: check-email
 description: Check email for urgent messages
 triggers: [email, gmail, inbox]
@@ -32,7 +32,7 @@ triggers: [email, gmail, inbox]
 
   it("should load a folder skill with skill.md", () => {
     const root = makeProjectRoot();
-    const skillDir = join(root, "skills", "deploy-site");
+    const skillDir = join(root, "skills", "global", "deploy-site");
     mkdirSync(skillDir);
     writeFileSync(join(skillDir, "skill.md"), `---
 name: deploy-site
@@ -52,7 +52,7 @@ triggers: [deploy, release]
 
   it("should load a folder skill with SKILL.md (uppercase)", () => {
     const root = makeProjectRoot();
-    const skillDir = join(root, "skills", "vcp-screener");
+    const skillDir = join(root, "skills", "global", "vcp-screener");
     mkdirSync(skillDir);
     writeFileSync(join(skillDir, "SKILL.md"), `---
 name: vcp-screener
@@ -75,7 +75,7 @@ Run the screener.
 
   it("should skip files without name in frontmatter", () => {
     const root = makeProjectRoot();
-    writeFileSync(join(root, "skills", "bad.md"), "# No frontmatter\nJust text");
+    writeFileSync(join(root, "skills", "global", "bad.md"), "# No frontmatter\nJust text");
     const skills = loadSkills(root);
     expect(skills).toHaveLength(0);
   });
@@ -83,7 +83,7 @@ Run the screener.
   it("should load persona skills alongside global skills", () => {
     const root = makeProjectRoot();
     // Global skill
-    writeFileSync(join(root, "skills", "email.md"), `---
+    writeFileSync(join(root, "skills", "global", "email.md"), `---
 name: check-email
 description: Check email
 triggers: [email]
@@ -91,8 +91,8 @@ triggers: [email]
 Open gmail.
 `);
     // Persona skill
-    mkdirSync(join(root, "personas", "trader", "skills", "stock"), { recursive: true });
-    writeFileSync(join(root, "personas", "trader", "skills", "stock", "skill.md"), `---
+    mkdirSync(join(root, "skills", "trader", "stock"), { recursive: true });
+    writeFileSync(join(root, "skills", "trader", "stock", "skill.md"), `---
 name: stock-analysis
 description: Analyze stocks
 triggers: [stock]
@@ -108,7 +108,7 @@ Analyze the stock.
   it("should let persona skills override global skills on name collision", () => {
     const root = makeProjectRoot();
     // Global skill
-    const globalDir = join(root, "skills", "screener");
+    const globalDir = join(root, "skills", "global", "screener");
     mkdirSync(globalDir);
     writeFileSync(join(globalDir, "skill.md"), `---
 name: screener
@@ -118,8 +118,8 @@ triggers: [screen]
 Basic version.
 `);
     // Persona skill with same name
-    mkdirSync(join(root, "personas", "trader", "skills", "screener"), { recursive: true });
-    writeFileSync(join(root, "personas", "trader", "skills", "screener", "skill.md"), `---
+    mkdirSync(join(root, "skills", "trader", "screener"), { recursive: true });
+    writeFileSync(join(root, "skills", "trader", "screener", "skill.md"), `---
 name: screener
 description: Advanced trader screener
 triggers: [screen, scan]
@@ -133,15 +133,15 @@ Advanced version.
 
   it("should load only global skills when no persona specified", () => {
     const root = makeProjectRoot();
-    writeFileSync(join(root, "skills", "email.md"), `---
+    writeFileSync(join(root, "skills", "global", "email.md"), `---
 name: check-email
 description: Check email
 triggers: [email]
 ---
 Open gmail.
 `);
-    mkdirSync(join(root, "personas", "trader", "skills", "stock"), { recursive: true });
-    writeFileSync(join(root, "personas", "trader", "skills", "stock", "skill.md"), `---
+    mkdirSync(join(root, "skills", "trader", "stock"), { recursive: true });
+    writeFileSync(join(root, "skills", "trader", "stock", "skill.md"), `---
 name: stock-analysis
 description: Analyze stocks
 triggers: [stock]
@@ -155,16 +155,16 @@ Analyze.
 });
 
 describe("listPersonas", () => {
-  it("should list available personas", () => {
+  it("should list available personas (non-global dirs under skills/)", () => {
     const root = makeProjectRoot();
-    mkdirSync(join(root, "personas", "trader", "skills"), { recursive: true });
-    mkdirSync(join(root, "personas", "researcher", "skills"), { recursive: true });
+    mkdirSync(join(root, "skills", "trader"), { recursive: true });
+    mkdirSync(join(root, "skills", "researcher"), { recursive: true });
     const personas = listPersonas(root);
     expect(personas.sort()).toEqual(["researcher", "trader"]);
   });
 
-  it("should return empty for missing personas dir", () => {
-    const root = makeProjectRoot();
+  it("should return empty for missing skills dir", () => {
+    const root = mkdtempSync(join(tmpdir(), "xlens-"));
     expect(listPersonas(root)).toEqual([]);
   });
 });
