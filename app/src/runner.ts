@@ -70,6 +70,11 @@ export async function runOnce(prompt: string, options: RunOptions = {}): Promise
   try {
     await agent.prompt(prompt);
     await agent.waitForIdle();
+
+    if (agent.state.error) {
+      process.stderr.write(`\n[error] ${agent.state.error}\n`);
+      process.exitCode = 1;
+    }
   } finally {
     await browser.close();
   }
