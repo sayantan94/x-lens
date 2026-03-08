@@ -4,7 +4,7 @@ import { BrowserController } from "./browser.js";
 import { createTools } from "./tools.js";
 import { loadSkills, formatSkillsForPrompt } from "./skills.js";
 import { StatusServer } from "./status-server.js";
-import { renderMarkdown, renderError, renderToolUsage } from "./render.js";
+import { renderMarkdown, renderError, renderToolStart, renderToolEnd } from "./render.js";
 import { join } from "node:path";
 import { readMemory } from "./memory.js";
 
@@ -89,6 +89,7 @@ export async function runOnce(prompt: string, options: RunOptions = {}): Promise
 
 	let responseText = "";
 	let hasError = false;
+	const toolStartTimes = new Map<string, { startTime: number; args: Record<string, unknown> }>();
 
 	agent.subscribe((event: AgentEvent) => {
 		if (event.type === "message_update" && event.assistantMessageEvent.type === "text_delta") {
@@ -100,25 +101,36 @@ export async function runOnce(prompt: string, options: RunOptions = {}): Promise
 			});
 		}
 		if (event.type === "tool_execution_start") {
-			console.log(renderToolUsage(event.toolName));
+			const args = (event.args ?? {}) as Record<string, unknown>;
+			toolStartTimes.set(event.toolCallId, { startTime: Date.now(), args });
+			console.log(renderToolStart(event.toolName, args));
 			status.addUpdate({
 				type: "tool",
 				timestamp: Date.now(),
-				content: `${event.toolName} ${JSON.stringify(event.args)}`,
+				content: `${event.toolName} ${JSON.stringify(args)}`,
 			});
 		}
-		if (event.type === "tool_execution_end" && browserToolNames.has(event.toolName)) {
-			const result = event.result as any;
-			const content = result?.content;
-			if (Array.isArray(content)) {
-				const img = content.find((c: any) => c.type === "image");
-				if (img) {
-					status.addUpdate({
-						type: "screenshot",
-						timestamp: Date.now(),
-						content: `Screenshot from ${event.toolName}`,
-						screenshot: img.data,
-					});
+		if (event.type === "tool_execution_end") {
+			const started = toolStartTimes.get(event.toolCallId);
+			const durationMs = started ? Date.now() - started.startTime : 0;
+			const args = started?.args ?? {};
+			toolStartTimes.delete(event.toolCallId);
+
+			const isError = !!(event as any).isError;
+			console.log(renderToolEnd(event.toolName, args, durationMs, event.result, isError));
+
+			if (browserToolNames.has(event.toolName)) {
+				const content = (event.result as any)?.content;
+				if (Array.isArray(content)) {
+					const img = content.find((c: any) => c.type === "image");
+					if (img) {
+						status.addUpdate({
+							type: "screenshot",
+							timestamp: Date.now(),
+							content: `Screenshot from ${event.toolName}`,
+							screenshot: img.data,
+						});
+					}
 				}
 			}
 		}

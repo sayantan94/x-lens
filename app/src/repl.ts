@@ -6,7 +6,7 @@ import { BrowserController } from "./browser.js";
 import { createTools } from "./tools.js";
 import { loadSkills, formatSkillsForPrompt } from "./skills.js";
 import { StatusServer } from "./status-server.js";
-import { renderMarkdown, renderError, renderToolUsage, renderHeader } from "./render.js";
+import { renderMarkdown, renderError, renderToolStart, renderToolEnd, renderHeader } from "./render.js";
 import { join } from "node:path";
 import {
 	readMemory,
@@ -120,6 +120,9 @@ export async function runInteractive(options: ReplOptions = {}): Promise<void> {
 		"browser_type", "browser_scroll",
 	]);
 
+	// Track tool start times for duration calculation (like mom)
+	const toolStartTimes = new Map<string, { startTime: number; args: Record<string, unknown> }>();
+
 	// Subscribe to events ONCE (mom pattern — subscribe once, mutable run state)
 	agent.subscribe((event: AgentEvent) => {
 		// Collect streaming text
@@ -132,29 +135,41 @@ export async function runInteractive(options: ReplOptions = {}): Promise<void> {
 			});
 		}
 
-		// Tool execution logging
+		// Tool execution start — show label + args
 		if (event.type === "tool_execution_start") {
-			console.log(renderToolUsage(event.toolName));
+			const args = (event.args ?? {}) as Record<string, unknown>;
+			toolStartTimes.set(event.toolCallId, { startTime: Date.now(), args });
+			console.log(renderToolStart(event.toolName, args));
 			status.addUpdate({
 				type: "tool",
 				timestamp: Date.now(),
-				content: `${event.toolName} ${JSON.stringify(event.args)}`,
+				content: `${event.toolName} ${JSON.stringify(args)}`,
 			});
 		}
 
-		// Browser screenshots for status page
-		if (event.type === "tool_execution_end" && browserToolNames.has(event.toolName)) {
-			const result = event.result as any;
-			const content = result?.content;
-			if (Array.isArray(content)) {
-				const img = content.find((c: any) => c.type === "image");
-				if (img) {
-					status.addUpdate({
-						type: "screenshot",
-						timestamp: Date.now(),
-						content: `Screenshot from ${event.toolName}`,
-						screenshot: img.data,
-					});
+		// Tool execution end — show result preview + duration
+		if (event.type === "tool_execution_end") {
+			const started = toolStartTimes.get(event.toolCallId);
+			const durationMs = started ? Date.now() - started.startTime : 0;
+			const args = started?.args ?? {};
+			toolStartTimes.delete(event.toolCallId);
+
+			const isError = !!(event as any).isError;
+			console.log(renderToolEnd(event.toolName, args, durationMs, event.result, isError));
+
+			// Browser screenshots for status page
+			if (browserToolNames.has(event.toolName)) {
+				const content = (event.result as any)?.content;
+				if (Array.isArray(content)) {
+					const img = content.find((c: any) => c.type === "image");
+					if (img) {
+						status.addUpdate({
+							type: "screenshot",
+							timestamp: Date.now(),
+							content: `Screenshot from ${event.toolName}`,
+							screenshot: img.data,
+						});
+					}
 				}
 			}
 		}
