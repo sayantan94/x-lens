@@ -8,6 +8,7 @@ import type { TextContent, ImageContent } from "@mariozechner/pi-ai";
 import type { BrowserController } from "./browser.js";
 import type { Skill } from "./skills.js";
 import { exec } from "node:child_process";
+import { JobStore, type CreateJobInput } from "./job-store.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -351,11 +352,94 @@ function createSkillReadTool(skills: Skill[]): AgentTool {
 }
 
 // ---------------------------------------------------------------------------
+// Schedule tools
+// ---------------------------------------------------------------------------
+
+function createScheduleCreateTool(store: JobStore): AgentTool {
+  return {
+    name: "schedule_create",
+    label: "Create Schedule",
+    description:
+      "Create a scheduled job that runs automatically. Types: 'cron' (cron expression), 'interval' (every N minutes), 'continuous' (loop with pause). The job runs in the daemon using the specified persona's agent session.",
+    parameters: Type.Object({
+      id: Type.String({ description: "Unique job ID (e.g., 'oi-morning-scan')" }),
+      persona: Type.String({ description: "Persona to use (e.g., 'trader', 'predictor')" }),
+      prompt: Type.String({ description: "What to do each run (natural language instruction)" }),
+      type: Type.Union([Type.Literal("cron"), Type.Literal("interval"), Type.Literal("continuous")], {
+        description: "Job type: cron, interval, or continuous",
+      }),
+      schedule: Type.Optional(Type.String({ description: "Cron expression (for type=cron, e.g., '30 6 * * 1-5')" })),
+      interval_minutes: Type.Optional(Type.Number({ description: "Run every N minutes (for type=interval)" })),
+      pause_seconds: Type.Optional(Type.Number({ description: "Pause between loops in seconds (for type=continuous, default: 30)" })),
+      notify: Type.Boolean({ description: "Send macOS notification with results" }),
+    }),
+    execute: async (_toolCallId, params: any) => {
+      try {
+        const job = store.create(params as CreateJobInput);
+        return textResult(`Schedule "${job.id}" created (type: ${job.type}, persona: ${job.persona}). It will start running when the daemon is active.`);
+      } catch (err: any) {
+        return textResult(`Failed to create schedule: ${err.message}`);
+      }
+    },
+  };
+}
+
+function createScheduleDeleteTool(store: JobStore): AgentTool {
+  return {
+    name: "schedule_delete",
+    label: "Delete Schedule",
+    description: "Delete a scheduled job by ID. The job will stop running.",
+    parameters: Type.Object({
+      id: Type.String({ description: "Job ID to delete" }),
+    }),
+    execute: async (_toolCallId, params: any) => {
+      const deleted = store.delete(params.id);
+      if (deleted) {
+        return textResult(`Schedule "${params.id}" deleted.`);
+      }
+      return textResult(`Schedule "${params.id}" not found.`);
+    },
+  };
+}
+
+function createScheduleListTool(store: JobStore): AgentTool {
+  return {
+    name: "schedule_list",
+    label: "List Schedules",
+    description: "List all scheduled jobs with their status, last run time, and results.",
+    parameters: Type.Object({}),
+    execute: async () => {
+      const jobs = store.list();
+      if (jobs.length === 0) {
+        return textResult("No scheduled jobs.");
+      }
+      const lines = jobs.map((j) => {
+        const schedule = j.type === "cron" ? j.schedule :
+          j.type === "interval" ? `every ${j.interval_minutes}min` :
+          `continuous (${j.pause_seconds}s pause)`;
+        const lastRun = j.last_run ? `last: ${j.last_run}` : "never run";
+        const result = j.last_result_summary ? ` → ${j.last_result_summary}` : "";
+        return `- ${j.id} [${j.persona}] ${j.type}: ${schedule} | ${lastRun}${result} | runs: ${j.run_count} | notify: ${j.notify}`;
+      });
+      return textResult(`Scheduled jobs (${jobs.length}):\n${lines.join("\n")}`);
+    },
+  };
+}
+
+export function createScheduleTools(store: JobStore): AgentTool[] {
+  return [
+    createScheduleCreateTool(store),
+    createScheduleDeleteTool(store),
+    createScheduleListTool(store),
+  ];
+}
+
+// ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
 
-export function createTools(browser: BrowserController, skills: Skill[]): AgentTool[] {
-  return [
+export function createTools(browser: BrowserController, skills: Skill[], jobStore?: JobStore): AgentTool[] {
+  const tools = [
     createNavigateTool(browser),
     createScreenshotTool(browser),
     createClickTool(browser),
@@ -370,4 +454,8 @@ export function createTools(browser: BrowserController, skills: Skill[]): AgentT
     createMemoryAppendTool(),
     createSkillReadTool(skills),
   ];
+  if (jobStore) {
+    tools.push(...createScheduleTools(jobStore));
+  }
+  return tools;
 }

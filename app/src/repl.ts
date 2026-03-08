@@ -15,6 +15,7 @@ import {
 	clearSession,
 } from "./memory.js";
 import { shouldCompact, isContextOverflow, compact } from "./compaction.js";
+import { JobStore } from "./job-store.js";
 
 export interface ReplOptions {
 	visible?: boolean;
@@ -86,7 +87,8 @@ export async function runInteractive(options: ReplOptions = {}): Promise<void> {
 	const browser = new BrowserController({ headless: !options.visible });
 	const projectRoot = new URL("../..", import.meta.url).pathname;
 	const skills = loadSkills(projectRoot, options.persona);
-	const tools = createTools(browser, skills);
+	const jobStore = new JobStore();
+	const tools = createTools(browser, skills, jobStore);
 	const status = new StatusServer();
 
 	const model = resolveModel(options);
@@ -263,19 +265,24 @@ export async function runInteractive(options: ReplOptions = {}): Promise<void> {
 					}
 				}
 
-				compact(agent, model, logCompaction).then((result) => {
-					if (result) {
-						saveSessionMessages(agent.state.messages as Message[]);
-						logCompaction("Retrying after compaction...");
-						agent.continue();
-					} else {
-						console.error(renderError("Compaction produced no result. Cannot retry."));
+				// Defer to next tick — agent_end fires from inside the agent loop,
+				// the agent needs to fully unwind before we call continue()
+				setTimeout(() => {
+					compact(agent, model, logCompaction).then((result) => {
+						if (result) {
+							saveSessionMessages(agent.state.messages as Message[]);
+							logCompaction("Retrying after compaction...");
+							// Another tick to ensure compaction state is settled
+							setTimeout(() => agent.continue(), 0);
+						} else {
+							console.error(renderError("Compaction produced no result. Cannot retry."));
+							agentBusy = false;
+						}
+					}).catch((err) => {
+						console.error(renderError(`Emergency compaction failed: ${err instanceof Error ? err.message : String(err)}`));
 						agentBusy = false;
-					}
-				}).catch((err) => {
-					console.error(renderError(`Emergency compaction failed: ${err instanceof Error ? err.message : String(err)}`));
-					agentBusy = false;
-				});
+					});
+				}, 0);
 				return;
 			}
 

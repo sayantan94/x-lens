@@ -6,6 +6,7 @@ import { loadSkills, formatSkillsForPrompt } from "./skills.js";
 import { StatusServer } from "./status-server.js";
 import { renderMarkdown, renderError, renderToolStart, renderToolEnd } from "./render.js";
 import { readMemory } from "./memory.js";
+import { JobStore } from "./job-store.js";
 
 export interface RunOptions {
 	visible?: boolean;
@@ -71,7 +72,8 @@ export async function runOnce(prompt: string, options: RunOptions = {}): Promise
 	const browser = new BrowserController({ headless: !options.visible });
 	const projectRoot = new URL("../..", import.meta.url).pathname;
 	const skills = loadSkills(projectRoot, options.persona);
-	const tools = createTools(browser, skills);
+	const jobStore = new JobStore();
+	const tools = createTools(browser, skills, jobStore);
 	const status = new StatusServer();
 
 	const model = resolveModel(options);
