@@ -2,3 +2,4 @@ node_modules/
 dist/
 .x-lens/
 *.tgz
+.env

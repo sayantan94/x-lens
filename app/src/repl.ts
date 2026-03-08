@@ -10,7 +10,16 @@ import { join } from "node:path";
 export interface ReplOptions {
   visible?: boolean;
   model?: string;
+  provider?: string;
   skillsDir?: string;
+}
+
+function resolveModel(options: ReplOptions) {
+  const provider = options.provider || "bedrock";
+  if (provider === "anthropic") {
+    return getModel("anthropic", (options.model || "claude-sonnet-4-20250514") as any);
+  }
+  return getModel("amazon-bedrock", (options.model || "anthropic.claude-sonnet-4-20250514-v1:0") as any);
 }
 
 function buildSystemPrompt(skills: ReturnType<typeof loadSkills>): string {
@@ -47,7 +56,7 @@ export async function runInteractive(options: ReplOptions = {}): Promise<void> {
   const skills = loadSkills(skillsDir);
   const status = new StatusServer();
 
-  const model = getModel("amazon-bedrock", (options.model || "anthropic.claude-sonnet-4-20250514-v1:0") as any);
+  const model = resolveModel(options);
 
   const agent = new Agent({
     initialState: {
