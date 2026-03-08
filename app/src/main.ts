@@ -18,6 +18,7 @@ program
     "AI provider (bedrock or anthropic)",
     process.env.X_LENS_PROVIDER || "bedrock",
   )
+  .option("--new", "Start a new session (clear conversation history)")
   .action(async (prompt, options) => {
     if (prompt) {
       const { runOnce } = await import("./runner.js");

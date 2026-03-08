@@ -196,6 +196,54 @@ function createShellTool(): AgentTool {
   };
 }
 
+function createMemoryReadTool(): AgentTool {
+  return {
+    name: "memory_read",
+    label: "Read Memory",
+    description:
+      "Read your persistent memory file. Use this to recall information saved across sessions.",
+    parameters: Type.Object({}),
+    execute: async () => {
+      const { readMemory } = await import("./memory.js");
+      return textResult(readMemory());
+    },
+  };
+}
+
+function createMemoryWriteTool(): AgentTool {
+  return {
+    name: "memory_write",
+    label: "Write Memory",
+    description:
+      "Save information to persistent memory. This survives across sessions. Use for preferences, important context, or things to remember.",
+    parameters: Type.Object({
+      content: Type.String({ description: "Content to write (replaces existing memory)" }),
+    }),
+    execute: async (_toolCallId, params: any) => {
+      const { writeMemory } = await import("./memory.js");
+      writeMemory(params.content);
+      return textResult("Memory updated successfully.");
+    },
+  };
+}
+
+function createMemoryAppendTool(): AgentTool {
+  return {
+    name: "memory_append",
+    label: "Append Memory",
+    description:
+      "Append information to persistent memory without replacing existing content.",
+    parameters: Type.Object({
+      content: Type.String({ description: "Content to append to memory" }),
+    }),
+    execute: async (_toolCallId, params: any) => {
+      const { appendMemory } = await import("./memory.js");
+      appendMemory(params.content);
+      return textResult("Appended to memory successfully.");
+    },
+  };
+}
+
 function createFetchTool(): AgentTool {
   return {
     name: "fetch",
@@ -260,5 +308,8 @@ export function createBrowserTools(browser: BrowserController): AgentTool[] {
     createEvaluateTool(browser),
     createShellTool(),
     createFetchTool(),
+    createMemoryReadTool(),
+    createMemoryWriteTool(),
+    createMemoryAppendTool(),
   ];
 }

@@ -15,7 +15,10 @@ describe("createBrowserTools", () => {
     expect(names).toContain("browser_evaluate");
     expect(names).toContain("shell");
     expect(names).toContain("fetch");
-    expect(tools.length).toBe(8);
+    expect(names).toContain("memory_read");
+    expect(names).toContain("memory_write");
+    expect(names).toContain("memory_append");
+    expect(tools.length).toBe(11);
   });
 
   it("each tool should have name, label, description, parameters, execute", () => {
