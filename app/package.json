@@ -1,0 +1,28 @@
+{
+  "name": "@x-lens/app",
+  "version": "0.1.0",
+  "type": "module",
+  "bin": {
+    "x-lens": "dist/main.js"
+  },
+  "exports": {
+    ".": "./dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "dev": "tsc -p tsconfig.build.json --watch",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@mariozechner/pi-ai": "*",
+    "@mariozechner/pi-agent-core": "*",
+    "@mariozechner/pi-tui": "*",
+    "playwright-core": "^1.58.0",
+    "commander": "^14.0.0",
+    "@sinclair/typebox": "^0.34.48"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.2",
+    "vitest": "^3.2.1"
+  }
+}
