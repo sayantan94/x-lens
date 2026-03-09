@@ -1,4 +1,7 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { readFileSync, existsSync } from "node:fs";
+import { join } from "node:path";
+import { homedir } from "node:os";
 
 export interface StatusUpdate {
   type: "turn_start" | "tool_start" | "tool_end" | "screenshot" | "error" | "alert" | "turn_end";
@@ -724,6 +727,26 @@ export class StatusServer {
       if (req.url === "/api/updates") {
         res.writeHead(200, { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" });
         res.end(JSON.stringify(this.updates));
+        return;
+      }
+
+      if (req.url === "/api/jobs") {
+        const jsonlPath = join(homedir(), ".x-lens", "linkedin-posts.jsonl");
+        let posts: unknown[] = [];
+        if (existsSync(jsonlPath)) {
+          const content = readFileSync(jsonlPath, "utf-8");
+          for (const line of content.split("\n")) {
+            const trimmed = line.trim();
+            if (!trimmed) continue;
+            try {
+              posts.push(JSON.parse(trimmed));
+            } catch {
+              // Skip malformed lines
+            }
+          }
+        }
+        res.writeHead(200, { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" });
+        res.end(JSON.stringify(posts));
         return;
       }
 
