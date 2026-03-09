@@ -6,7 +6,7 @@ import { BrowserController } from "./browser.js";
 import { createTools } from "./tools.js";
 import { loadSkills, formatSkillsForPrompt } from "./skills.js";
 import { StatusServer } from "./status-server.js";
-import { renderMarkdown, renderError, renderToolStart, renderToolEnd, renderHeader, renderResponseStart, renderResponseEnd } from "./render.js";
+import { renderMarkdown, renderError, renderToolStart, renderToolEnd, renderHeader, renderResponseStart, renderResponseEnd, formatToolLabel, extractResultPreview } from "./render.js";
 import {
 	readMemory,
 	loadSessionMessages,
@@ -15,6 +15,7 @@ import {
 	clearSession,
 } from "./memory.js";
 import { shouldCompact, isContextOverflow, compact } from "./compaction.js";
+import { JobStore } from "./job-store.js";
 
 export interface ReplOptions {
 	visible?: boolean;
@@ -26,10 +27,11 @@ export interface ReplOptions {
 
 function resolveModel(options: ReplOptions) {
 	const provider = options.provider || "bedrock";
+	const modelId = options.model || process.env.X_LENS_MODEL;
 	if (provider === "anthropic") {
-		return getModel("anthropic", (options.model || "claude-sonnet-4-20250514") as any);
+		return getModel("anthropic", (modelId || "claude-sonnet-4-20250514") as any);
 	}
-	return getModel("amazon-bedrock", (options.model || "anthropic.claude-sonnet-4-20250514-v1:0") as any);
+	return getModel("amazon-bedrock", (modelId || "anthropic.claude-sonnet-4-20250514-v1:0") as any);
 }
 
 /**
@@ -86,7 +88,8 @@ export async function runInteractive(options: ReplOptions = {}): Promise<void> {
 	const browser = new BrowserController({ headless: !options.visible });
 	const projectRoot = new URL("../..", import.meta.url).pathname;
 	const skills = loadSkills(projectRoot, options.persona);
-	const tools = createTools(browser, skills);
+	const jobStore = new JobStore();
+	const tools = createTools(browser, skills, jobStore);
 	const status = new StatusServer();
 
 	const model = resolveModel(options);
@@ -124,6 +127,9 @@ export async function runInteractive(options: ReplOptions = {}): Promise<void> {
 	let aborted = false;
 	let needsRetryAfterCompaction = false;
 	let lastInputTokens = 0;
+	let lastOutputTokens = 0;
+	let lastCacheReadTokens = 0;
+	let lastCacheWriteTokens = 0;
 	let turnStartTime = 0;
 
 	const browserToolNames = new Set([
@@ -140,13 +146,16 @@ export async function runInteractive(options: ReplOptions = {}): Promise<void> {
 	};
 
 	async function checkAndCompact(): Promise<void> {
-		if (!shouldCompact(lastInputTokens, model.contextWindow)) return;
+		if (!shouldCompact(lastInputTokens + lastCacheReadTokens, model.contextWindow)) return;
 
 		logCompaction(`Context at ${lastInputTokens} tokens (limit: ${model.contextWindow}). Compacting...`);
 		status.addUpdate({
-			type: "message",
+			type: "tool_start",
 			timestamp: Date.now(),
-			content: "Compacting conversation context...",
+			content: "",
+			toolName: "compaction",
+			toolLabel: "Compacting conversation context...",
+			source: "repl",
 		});
 
 		try {
@@ -168,17 +177,10 @@ export async function runInteractive(options: ReplOptions = {}): Promise<void> {
 		if (event.type === "message_update" && event.assistantMessageEvent.type === "text_delta") {
 			const delta = event.assistantMessageEvent.delta;
 			if (!isStreaming) {
-				// First chunk — show streaming indicator
 				process.stdout.write(chalk.dim("  ● Responding... (Ctrl+C to stop)"));
 				isStreaming = true;
 			}
 			responseText += delta;
-
-			status.addUpdate({
-				type: "message",
-				timestamp: Date.now(),
-				content: delta,
-			});
 		}
 
 		// Tool execution start — show label + args
@@ -187,9 +189,12 @@ export async function runInteractive(options: ReplOptions = {}): Promise<void> {
 			toolStartTimes.set(event.toolCallId, { startTime: Date.now(), args });
 			console.log(renderToolStart(event.toolName, args));
 			status.addUpdate({
-				type: "tool",
+				type: "tool_start",
 				timestamp: Date.now(),
-				content: `${event.toolName} ${JSON.stringify(args)}`,
+				content: "",
+				toolName: event.toolName,
+				toolLabel: formatToolLabel(event.toolName, args),
+				source: "repl",
 			});
 		}
 
@@ -203,6 +208,18 @@ export async function runInteractive(options: ReplOptions = {}): Promise<void> {
 			const isErr = !!(event as any).isError;
 			console.log(renderToolEnd(event.toolName, args, durationMs, event.result, isErr));
 
+			const resultPreview = extractResultPreview(event.result, isErr);
+			status.addUpdate({
+				type: "tool_end",
+				timestamp: Date.now(),
+				content: resultPreview,
+				toolName: event.toolName,
+				toolLabel: formatToolLabel(event.toolName, args),
+				duration: durationMs,
+				isError: isErr,
+				source: "repl",
+			});
+
 			// Browser screenshots for status page
 			if (browserToolNames.has(event.toolName)) {
 				const content = (event.result as any)?.content;
@@ -214,6 +231,7 @@ export async function runInteractive(options: ReplOptions = {}): Promise<void> {
 							timestamp: Date.now(),
 							content: `Screenshot from ${event.toolName}`,
 							screenshot: img.data,
+							source: "repl",
 						});
 					}
 				}
@@ -227,7 +245,10 @@ export async function runInteractive(options: ReplOptions = {}): Promise<void> {
 			// Track usage from assistant messages
 			const msg = event.message as any;
 			if (msg.role === "assistant" && msg.usage) {
-				lastInputTokens = msg.usage.input + (msg.usage.cacheRead || 0);
+				lastInputTokens = msg.usage.input || 0;
+				lastOutputTokens = msg.usage.output || 0;
+				lastCacheReadTokens = msg.usage.cacheRead || 0;
+				lastCacheWriteTokens = msg.usage.cacheWrite || 0;
 
 				// Check for overflow error — flag for compaction + retry after agent_end
 				if (isContextOverflow(msg as AssistantMessage)) {
@@ -263,19 +284,24 @@ export async function runInteractive(options: ReplOptions = {}): Promise<void> {
 					}
 				}
 
-				compact(agent, model, logCompaction).then((result) => {
-					if (result) {
-						saveSessionMessages(agent.state.messages as Message[]);
-						logCompaction("Retrying after compaction...");
-						agent.continue();
-					} else {
-						console.error(renderError("Compaction produced no result. Cannot retry."));
+				// Defer to next tick — agent_end fires from inside the agent loop,
+				// the agent needs to fully unwind before we call continue()
+				setTimeout(() => {
+					compact(agent, model, logCompaction).then((result) => {
+						if (result) {
+							saveSessionMessages(agent.state.messages as Message[]);
+							logCompaction("Retrying after compaction...");
+							// Another tick to ensure compaction state is settled
+							setTimeout(() => agent.continue(), 0);
+						} else {
+							console.error(renderError("Compaction produced no result. Cannot retry."));
+							agentBusy = false;
+						}
+					}).catch((err) => {
+						console.error(renderError(`Emergency compaction failed: ${err instanceof Error ? err.message : String(err)}`));
 						agentBusy = false;
-					}
-				}).catch((err) => {
-					console.error(renderError(`Emergency compaction failed: ${err instanceof Error ? err.message : String(err)}`));
-					agentBusy = false;
-				});
+					});
+				}, 0);
 				return;
 			}
 
@@ -310,6 +336,33 @@ export async function runInteractive(options: ReplOptions = {}): Promise<void> {
 				const elapsed = turnStartTime > 0 ? Date.now() - turnStartTime : 0;
 				console.log(renderResponseEnd(elapsed, lastInputTokens));
 			}
+
+			// Check for [ALERT] markers
+			if (responseText) {
+				const alertMatch = responseText.match(/\[ALERT\]\s*(.+?)(?:\n|$)/i);
+				if (alertMatch) {
+					status.addUpdate({
+						type: "alert",
+						timestamp: Date.now(),
+						content: alertMatch[1].trim(),
+						source: "repl",
+					});
+				}
+			}
+
+			status.addUpdate({
+				type: "turn_end",
+				timestamp: Date.now(),
+				content: "",
+				tokens: lastInputTokens,
+				inputTokens: lastInputTokens,
+				outputTokens: lastOutputTokens,
+				cacheReadTokens: lastCacheReadTokens,
+				cacheWriteTokens: lastCacheWriteTokens,
+				contextWindow: model.contextWindow,
+				turnDuration: turnStartTime > 0 ? Date.now() - turnStartTime : 0,
+				source: "repl",
+			});
 
 			responseText = "";
 			isStreaming = false;
@@ -392,6 +445,12 @@ export async function runInteractive(options: ReplOptions = {}): Promise<void> {
 
 			agentBusy = true;
 			turnStartTime = Date.now();
+			status.addUpdate({
+				type: "turn_start",
+				timestamp: Date.now(),
+				content: trimmed.length > 100 ? trimmed.slice(0, 100) + "..." : trimmed,
+				source: "repl",
+			});
 
 			try {
 				await agent.prompt(userMessage);

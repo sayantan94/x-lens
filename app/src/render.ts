@@ -69,7 +69,7 @@ export function renderStreamDelta(delta: string): string {
 // Helpers
 // ---------------------------------------------------------------------------
 
-function formatToolLabel(toolName: string, args: Record<string, unknown>): string {
+export function formatToolLabel(toolName: string, args: Record<string, unknown>): string {
 	switch (toolName) {
 		case "browser_navigate":
 			return `Navigate → ${truncate(String(args.url || ""), 80)}`;
@@ -111,7 +111,7 @@ function formatArgsPreview(args: Record<string, unknown>): string {
 	return "";
 }
 
-function extractResultPreview(result: unknown, isError: boolean): string {
+export function extractResultPreview(result: unknown, isError: boolean): string {
 	if (!result) return "";
 
 	const content = (result as any)?.content;

@@ -171,6 +171,7 @@ MCP_MARKET_DATA_EXECUTABLE=/path/to/mcp-market-data-server
 | Variable | Required | Description |
 |----------|----------|-------------|
 | `X_LENS_PROVIDER` | No | Default provider: `bedrock` or `anthropic` (default: `bedrock`) |
+| `X_LENS_MODEL` | No | Model ID override (e.g., `claude-sonnet-4-20250514` for Anthropic, `anthropic.claude-sonnet-4-20250514-v1:0` for Bedrock) |
 | `ANTHROPIC_API_KEY` | If using anthropic | Anthropic API key |
 | `AWS_PROFILE` | If using bedrock | AWS CLI profile name |
 | `AWS_ACCESS_KEY_ID` | If using bedrock (no profile) | AWS access key |
@@ -239,6 +240,91 @@ x-lens --visible "log into my bank and check my balance"
 x-lens --new
 ```
 
+## Daemon (24/7 Autonomous Agent)
+
+The daemon runs x-lens in the background as an always-on autonomous agent. It monitors markets, executes scheduled tasks, learns from results, and sends macOS notifications when it finds actionable trades.
+
+### Quick Start
+
+```bash
+# Start the daemon for a specific persona (foreground — see output live)
+x-lens daemon start --persona trader
+
+# Default persona is "trader" if not specified
+x-lens daemon start
+
+# Use Anthropic instead of Bedrock
+x-lens daemon start --persona trader --provider anthropic
+```
+
+The daemon only runs jobs for the specified persona. On first start with `--persona trader`, it seeds 7 default jobs covering the full US trading day:
+
+| Job | Schedule (ET) | What it does |
+|-----|---------------|--------------|
+| Pre-market briefing | 8:00 AM Mon–Fri | Futures, overnight gaps, macro calendar |
+| OI scan | 8:30 AM Mon–Fri | Open interest analysis across SPY/QQQ/IWM |
+| Earnings watch | 9:00 AM Mon–Fri | Today's earnings plays, IV crush setups |
+| Sector rotation | 10:00 AM Mon–Fri | Sector strength ranking, rotation signals |
+| Breakout screener | 11:00 AM Mon–Fri | VCP, cup-and-handle, flag setups |
+| Regime check | Every 60 min | VIX regime, trend classification |
+| EOD summary | 4:15 PM Mon–Fri | Daily P&L, key levels, next-day plan |
+
+### Managing the Daemon
+
+```bash
+# Check if daemon is running + list jobs
+x-lens daemon status
+
+# Stop the daemon
+x-lens daemon stop
+
+# View live logs
+x-lens daemon logs
+x-lens daemon logs -n 100    # show last 100 lines
+```
+
+### Auto-Start on Boot (macOS)
+
+```bash
+# Install as launchd service — auto-starts on boot, auto-restarts on crash
+x-lens daemon install
+
+# Remove the launchd service
+x-lens daemon uninstall
+```
+
+This creates `~/Library/LaunchAgents/com.x-lens.daemon.plist` with `KeepAlive` and `RunAtLoad`.
+
+### Notifications
+
+The agent marks actionable findings with `[ALERT]` in its output. The daemon detects these and sends **macOS native notifications** (via `osascript`). You'll get notified for things like:
+
+- Market regime changes (e.g., VIX spike above 20)
+- Breakout setups in your watchlist
+- Unusual open interest activity
+- Earnings surprises
+
+### Agent-Driven Scheduling
+
+The agent manages its own schedule. It has three tools:
+
+| Tool | Description |
+|------|-------------|
+| `schedule_create` | Create a new job (cron, interval, or continuous) |
+| `schedule_delete` | Remove a job |
+| `schedule_list` | List all jobs with status |
+
+Job types:
+- **cron** — standard cron expression (e.g., `30 6 * * 1-5` for 6:30 AM weekdays)
+- **interval** — every N minutes
+- **continuous** — loop with a pause between runs
+
+The agent can create new jobs, delete old ones, and adapt its monitoring based on what it learns. Jobs persist in `~/.x-lens/jobs.json`.
+
+### Per-Persona Sessions
+
+Each persona gets its own persistent session file (`~/.x-lens/sessions/<persona>.jsonl`). The daemon resumes context across restarts — the agent remembers what it found in previous runs.
+
 ## Memory & Persistence
 
 x-lens stores persistent data in `~/.x-lens/`:
@@ -246,7 +332,10 @@ x-lens stores persistent data in `~/.x-lens/`:
 | What | Path | Description |
 |------|------|-------------|
 | Memory | `~/.x-lens/MEMORY.md` | Agent's long-term memory — preferences, URLs, recurring info. Read at startup, written via `memory_write`/`memory_append` tools. |
-| Session | `~/.x-lens/sessions/context.jsonl` | Conversation history (JSONL). Automatically resumed on next run. Use `--new` to clear. |
+| Session (REPL) | `~/.x-lens/sessions/context.jsonl` | REPL conversation history. Resumed on next run. Use `--new` to clear. |
+| Session (daemon) | `~/.x-lens/sessions/<persona>.jsonl` | Per-persona daemon sessions. Persist across daemon restarts. |
+| Jobs | `~/.x-lens/jobs.json` | Agent-managed scheduled jobs for the daemon. |
+| Daemon log | `~/.x-lens/daemon.log` | Daemon stdout/stderr when running via launchd. |
 | Browser profile | `~/.x-lens/browser-profile/` | Persistent Chromium profile — cookies, auth, localStorage survive across runs. |
 | OI cache | `~/.x-lens/oi-cache/` | Cached open interest data for day-over-day delta calculations. |
 
@@ -264,7 +353,7 @@ If port 3456 is busy, it automatically tries the next available port (up to 3465
 
 ## Tools
 
-The agent has 12 tools available:
+The agent has 15 tools available (12 core + 3 scheduling):
 
 | Tool | Description |
 |------|-------------|
@@ -280,6 +369,9 @@ The agent has 12 tools available:
 | `memory_read` | Read persistent memory |
 | `memory_write` | Write/replace persistent memory |
 | `memory_append` | Append to persistent memory |
+| `schedule_create` | Create a scheduled job (cron/interval/continuous) |
+| `schedule_delete` | Delete a scheduled job |
+| `schedule_list` | List all scheduled jobs with status |
 
 ## Project Structure
 
@@ -294,9 +386,13 @@ x-lens/
 │       ├── runner.ts        # Command mode (single task)
 │       ├── repl.ts          # Interactive REPL with session persistence
 │       ├── browser.ts       # Playwright browser controller
-│       ├── tools.ts         # Agent tools (browser, shell, fetch, memory)
+│       ├── tools.ts         # Agent tools (browser, shell, fetch, memory, scheduling)
 │       ├── skills.ts        # Skill loader with persona support
 │       ├── memory.ts        # Memory & session persistence
+│       ├── daemon.ts        # Background daemon with job scheduling
+│       ├── job-store.ts     # Persistent job store (~/.x-lens/jobs.json)
+│       ├── session-manager.ts # Per-persona session persistence
+│       ├── notify.ts        # macOS native notifications
 │       ├── render.ts        # Terminal markdown rendering
 │       └── status-server.ts # Live monitoring page
 ├── skills/          # All skills (global + per-persona)

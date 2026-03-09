@@ -23,9 +23,11 @@
     "dotenv": "^17.3.1",
     "marked": "^17.0.4",
     "marked-terminal": "^7.3.0",
+    "node-cron": "^4.2.1",
     "playwright-core": "^1.58.0"
   },
   "devDependencies": {
+    "@types/node-cron": "^3.0.11",
     "typescript": "^5.9.2",
     "vitest": "^3.2.1"
   }
