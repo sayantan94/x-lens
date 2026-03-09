@@ -12,26 +12,26 @@ describe("notify", () => {
     vi.mocked(exec).mockClear();
   });
 
-  it("should call osascript with title and body", () => {
+  it("should call terminal-notifier with title and body", () => {
     notify("NVDA: CALL 72%", "Entry above $143, target $155");
     expect(exec).toHaveBeenCalledOnce();
     const cmd = (exec as any).mock.calls[0][0] as string;
-    expect(cmd).toContain("display notification");
+    expect(cmd).toContain("terminal-notifier");
     expect(cmd).toContain("NVDA: CALL 72%");
     expect(cmd).toContain("Entry above $143, target $155");
   });
 
-  it("should escape double quotes in title and body", () => {
-    notify('Test "quotes"', 'Body "here"');
+  it("should include subtitle when provided", () => {
+    notify("Alert", "Body text", "Subtitle here");
     const cmd = (exec as any).mock.calls[0][0] as string;
-    expect(cmd).toContain('\\"quotes\\"');
-    expect(cmd).toContain('\\"here\\"');
-    expect(cmd).toContain("display notification");
+    expect(cmd).toContain("-subtitle");
+    expect(cmd).toContain("Subtitle here");
   });
 
-  it("should include sound name", () => {
-    notify("Alert", "Body", "Glass");
+  it("should include group flag for x-lens", () => {
+    notify("Test", "Body");
     const cmd = (exec as any).mock.calls[0][0] as string;
-    expect(cmd).toContain('sound name "Glass"');
+    expect(cmd).toContain("-group");
+    expect(cmd).toContain("x-lens");
   });
 });

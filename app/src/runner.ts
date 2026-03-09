@@ -4,7 +4,7 @@ import { BrowserController } from "./browser.js";
 import { createTools } from "./tools.js";
 import { loadSkills, formatSkillsForPrompt } from "./skills.js";
 import { StatusServer } from "./status-server.js";
-import { renderMarkdown, renderError, renderToolStart, renderToolEnd } from "./render.js";
+import { renderMarkdown, renderError, renderToolStart, renderToolEnd, formatToolLabel, extractResultPreview } from "./render.js";
 import { readMemory } from "./memory.js";
 import { JobStore } from "./job-store.js";
 
@@ -102,20 +102,18 @@ export async function runOnce(prompt: string, options: RunOptions = {}): Promise
 	agent.subscribe((event: AgentEvent) => {
 		if (event.type === "message_update" && event.assistantMessageEvent.type === "text_delta") {
 			responseText += event.assistantMessageEvent.delta;
-			status.addUpdate({
-				type: "message",
-				timestamp: Date.now(),
-				content: event.assistantMessageEvent.delta,
-			});
 		}
 		if (event.type === "tool_execution_start") {
 			const args = (event.args ?? {}) as Record<string, unknown>;
 			toolStartTimes.set(event.toolCallId, { startTime: Date.now(), args });
 			console.log(renderToolStart(event.toolName, args));
 			status.addUpdate({
-				type: "tool",
+				type: "tool_start",
 				timestamp: Date.now(),
-				content: `${event.toolName} ${JSON.stringify(args)}`,
+				content: "",
+				toolName: event.toolName,
+				toolLabel: formatToolLabel(event.toolName, args),
+				source: "cmd",
 			});
 		}
 		if (event.type === "tool_execution_end") {
@@ -124,8 +122,19 @@ export async function runOnce(prompt: string, options: RunOptions = {}): Promise
 			const args = started?.args ?? {};
 			toolStartTimes.delete(event.toolCallId);
 
-			const isError = !!(event as any).isError;
-			console.log(renderToolEnd(event.toolName, args, durationMs, event.result, isError));
+			const isErr = !!(event as any).isError;
+			console.log(renderToolEnd(event.toolName, args, durationMs, event.result, isErr));
+
+			status.addUpdate({
+				type: "tool_end",
+				timestamp: Date.now(),
+				content: extractResultPreview(event.result, isErr),
+				toolName: event.toolName,
+				toolLabel: formatToolLabel(event.toolName, args),
+				duration: durationMs,
+				isError: isErr,
+				source: "cmd",
+			});
 
 			if (browserToolNames.has(event.toolName)) {
 				const content = (event.result as any)?.content;
@@ -137,6 +146,7 @@ export async function runOnce(prompt: string, options: RunOptions = {}): Promise
 							timestamp: Date.now(),
 							content: `Screenshot from ${event.toolName}`,
 							screenshot: img.data,
+							source: "cmd",
 						});
 					}
 				}
@@ -153,6 +163,7 @@ export async function runOnce(prompt: string, options: RunOptions = {}): Promise
 							type: "error",
 							timestamp: Date.now(),
 							content: errorMsg,
+							source: "cmd",
 						});
 					}
 				}
@@ -173,8 +184,22 @@ export async function runOnce(prompt: string, options: RunOptions = {}): Promise
 			timestamp: Date.now(),
 		};
 
+		status.addUpdate({
+			type: "turn_start",
+			timestamp: Date.now(),
+			content: prompt.length > 100 ? prompt.slice(0, 100) + "..." : prompt,
+			source: "cmd",
+		});
+
 		await agent.prompt(userMessage);
 		await agent.waitForIdle();
+
+		status.addUpdate({
+			type: "turn_end",
+			timestamp: Date.now(),
+			content: "",
+			source: "cmd",
+		});
 
 		if (hasError) {
 			process.exitCode = 1;

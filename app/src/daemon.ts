@@ -16,6 +16,8 @@ import {
 } from "./session-manager.js";
 import { notify } from "./notify.js";
 import { shouldCompact, isContextOverflow, compact } from "./compaction.js";
+import { StatusServer } from "./status-server.js";
+import { formatToolLabel, extractResultPreview } from "./render.js";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -138,6 +140,9 @@ interface PersonaAgent {
   browser: BrowserController;
   busy: boolean;
   lastInputTokens: number;
+  lastOutputTokens: number;
+  lastCacheReadTokens: number;
+  lastCacheWriteTokens: number;
 }
 
 const personaAgents = new Map<string, PersonaAgent>();
@@ -190,7 +195,7 @@ function getOrCreatePersonaAgent(
     log(`[${persona}] Restored ${previousMessages.length} messages from session`);
   }
 
-  const pa: PersonaAgent = { agent, browser, busy: false, lastInputTokens: 0 };
+  const pa: PersonaAgent = { agent, browser, busy: false, lastInputTokens: 0, lastOutputTokens: 0, lastCacheReadTokens: 0, lastCacheWriteTokens: 0 };
   personaAgents.set(persona, pa);
   return pa;
 }
@@ -204,6 +209,7 @@ async function executeJob(
   jobStore: JobStore,
   projectRoot: string,
   provider: string,
+  status: StatusServer,
   modelId?: string,
 ): Promise<void> {
   const pa = getOrCreatePersonaAgent(job.persona, jobStore, projectRoot, provider, modelId);
@@ -214,66 +220,110 @@ async function executeJob(
   }
 
   pa.busy = true;
+  const jobSource = `daemon:${job.id}`;
+  const jobStartTime = Date.now();
   log(`[${job.persona}] Running job "${job.id}": ${job.prompt}`);
+
+  status.addUpdate({
+    type: "turn_start",
+    timestamp: Date.now(),
+    content: `${job.id}: ${job.prompt.slice(0, 100)}`,
+    source: jobSource,
+  });
 
   let responseText = "";
   let hasError = false;
-  const toolStartTimes = new Map<string, { startTime: number; name: string }>();
+  const toolStartTimes = new Map<string, { startTime: number; args: Record<string, unknown> }>();
 
   const unsubscribe = pa.agent.subscribe((event: AgentEvent) => {
     if (event.type === "message_update" && event.assistantMessageEvent.type === "text_delta") {
       responseText += event.assistantMessageEvent.delta;
     }
 
-    // Tool execution start — log tool name + args
     if (event.type === "tool_execution_start") {
       const args = (event.args ?? {}) as Record<string, unknown>;
-      toolStartTimes.set(event.toolCallId, { startTime: Date.now(), name: event.toolName });
-      const argSummary = Object.entries(args)
-        .map(([k, v]) => {
-          const val = typeof v === "string" && v.length > 100 ? v.slice(0, 100) + "..." : String(v);
-          return `${k}=${val}`;
-        })
-        .join(", ");
-      log(`[${job.persona}] ▶ ${event.toolName}(${argSummary})`);
+      toolStartTimes.set(event.toolCallId, { startTime: Date.now(), args });
+      const label = formatToolLabel(event.toolName, args);
+      log(`[${job.persona}] ▶ ${label}`);
+      status.addUpdate({
+        type: "tool_start",
+        timestamp: Date.now(),
+        content: "",
+        toolName: event.toolName,
+        toolLabel: label,
+        source: jobSource,
+      });
     }
 
-    // Tool execution end — log result preview + duration
     if (event.type === "tool_execution_end") {
       const started = toolStartTimes.get(event.toolCallId);
       const durationMs = started ? Date.now() - started.startTime : 0;
-      const durationStr = durationMs > 1000 ? `${(durationMs / 1000).toFixed(1)}s` : `${durationMs}ms`;
+      const args = started?.args ?? {};
       toolStartTimes.delete(event.toolCallId);
 
       const isErr = !!(event as any).isError;
-      const result = event.result as any;
-      let preview = "";
-      if (result?.content) {
-        const textPart = Array.isArray(result.content)
-          ? result.content.find((c: any) => c.type === "text")?.text
-          : typeof result.content === "string" ? result.content : "";
-        if (textPart) {
-          preview = ` → ${textPart.slice(0, 150).replace(/\n/g, " ")}`;
-          if (textPart.length > 150) preview += "...";
+      const label = formatToolLabel(event.toolName, args);
+      const resultPreview = extractResultPreview(event.result, isErr);
+      const durationStr = durationMs > 1000 ? `${(durationMs / 1000).toFixed(1)}s` : `${durationMs}ms`;
+      const icon = isErr ? "✗" : "✓";
+      log(`[${job.persona}] ${icon} ${label} (${durationStr})${resultPreview ? ` → ${resultPreview.slice(0, 100)}` : ""}`);
+
+      status.addUpdate({
+        type: "tool_end",
+        timestamp: Date.now(),
+        content: resultPreview,
+        toolName: event.toolName,
+        toolLabel: label,
+        duration: durationMs,
+        isError: isErr,
+        source: jobSource,
+      });
+
+      // Browser screenshots
+      const browserToolNames = new Set(["browser_navigate", "browser_screenshot", "browser_click", "browser_type", "browser_scroll"]);
+      if (browserToolNames.has(event.toolName)) {
+        const content = (event.result as any)?.content;
+        if (Array.isArray(content)) {
+          const img = content.find((c: any) => c.type === "image");
+          if (img) {
+            status.addUpdate({
+              type: "screenshot",
+              timestamp: Date.now(),
+              content: `Screenshot from ${event.toolName}`,
+              screenshot: img.data,
+              source: jobSource,
+            });
+          }
         }
       }
-      const icon = isErr ? "✗" : "✓";
-      log(`[${job.persona}] ${icon} ${event.toolName} (${durationStr})${preview}`);
     }
 
     if (event.type === "message_end") {
       appendPersonaSessionMessage(job.persona, event.message as Message);
       const msg = event.message as any;
       if (msg.role === "assistant" && msg.usage) {
-        pa.lastInputTokens = msg.usage.input + (msg.usage.cacheRead || 0);
+        pa.lastInputTokens = msg.usage.input || 0;
+        pa.lastOutputTokens = msg.usage.output || 0;
+        pa.lastCacheReadTokens = msg.usage.cacheRead || 0;
+        pa.lastCacheWriteTokens = msg.usage.cacheWrite || 0;
         log(`[${job.persona}] tokens: ${msg.usage.input} input, ${msg.usage.output} output`);
       }
     }
 
     if (event.type === "agent_end") {
-      // Log the final response
       if (responseText) {
         log(`[${job.persona}] Response:\n${responseText}`);
+      }
+
+      // Check for alerts
+      const alertMatch = responseText.match(/\[ALERT\]\s*(.+?)(?:\n|$)/i);
+      if (alertMatch) {
+        status.addUpdate({
+          type: "alert",
+          timestamp: Date.now(),
+          content: alertMatch[1].trim(),
+          source: jobSource,
+        });
       }
 
       if (event.messages?.length) {
@@ -282,6 +332,12 @@ async function executeJob(
           if (errorMsg) {
             logError(`[${job.persona}] Job "${job.id}" error: ${errorMsg}`);
             hasError = true;
+            status.addUpdate({
+              type: "error",
+              timestamp: Date.now(),
+              content: errorMsg,
+              source: jobSource,
+            });
           }
         }
       }
@@ -321,7 +377,7 @@ async function executeJob(
 
     // Compact if needed
     const model = resolveModel(provider, modelId);
-    if (shouldCompact(pa.lastInputTokens, model.contextWindow)) {
+    if (shouldCompact(pa.lastInputTokens + pa.lastCacheReadTokens, model.contextWindow)) {
       log(`[${job.persona}] Compacting session...`);
       const result = await compact(pa.agent, model, (msg) => log(`[${job.persona}] ${msg}`));
       if (result) {
@@ -339,6 +395,19 @@ async function executeJob(
       notify(`[${job.persona.toUpperCase()}] Job Failed`, `${job.id}: ${msg}`);
     }
   } finally {
+    status.addUpdate({
+      type: "turn_end",
+      timestamp: Date.now(),
+      content: "",
+      tokens: pa.lastInputTokens,
+      inputTokens: pa.lastInputTokens,
+      outputTokens: pa.lastOutputTokens,
+      cacheReadTokens: pa.lastCacheReadTokens,
+      cacheWriteTokens: pa.lastCacheWriteTokens,
+      contextWindow: resolveModel(provider, modelId).contextWindow,
+      turnDuration: Date.now() - jobStartTime,
+      source: jobSource,
+    });
     unsubscribe();
     responseText = "";
     pa.busy = false;
@@ -359,6 +428,7 @@ export async function startDaemon(options: {
   const persona = options.persona || "trader";
   const projectRoot = new URL("../..", import.meta.url).pathname;
   const jobStore = new JobStore();
+  const status = new StatusServer();
 
   ensureDir(X_LENS_DIR);
 
@@ -367,6 +437,8 @@ export async function startDaemon(options: {
 
   log("=== x-lens daemon starting ===");
   log(`Provider: ${provider}, Persona: ${persona}, PID: ${process.pid}`);
+
+  await status.start();
 
   // Seed default jobs if none exist for this persona
   const existingForPersona = jobStore.list().filter((j) => j.persona === persona);
@@ -468,16 +540,16 @@ export async function startDaemon(options: {
           continue;
         }
         const task = cron.schedule(job.schedule, () => {
-          executeJob(job, jobStore, projectRoot, provider, modelId);
+          executeJob(job, jobStore, projectRoot, provider, status, modelId);
         });
         cronTasks.push(task);
         log(`Scheduled cron job "${job.id}": ${job.schedule}`);
       } else if (job.type === "interval" && job.interval_minutes) {
         const ms = job.interval_minutes * 60 * 1000;
         // Run immediately on start, then at interval
-        executeJob(job, jobStore, projectRoot, provider, modelId);
+        executeJob(job, jobStore, projectRoot, provider, status, modelId);
         const iv = setInterval(() => {
-          executeJob(job, jobStore, projectRoot, provider, modelId);
+          executeJob(job, jobStore, projectRoot, provider, status, modelId);
         }, ms);
         intervals.push(iv);
         log(`Scheduled interval job "${job.id}": every ${job.interval_minutes}min`);
@@ -490,7 +562,7 @@ export async function startDaemon(options: {
           while (!ctrl.signal.aborted) {
             const currentJob = jobStore.get(job.id);
             if (!currentJob || !currentJob.enabled) break;
-            await executeJob(currentJob, jobStore, projectRoot, provider, modelId);
+            await executeJob(currentJob, jobStore, projectRoot, provider, status, modelId);
             await new Promise((r) => {
               const timeout = setTimeout(r, pauseMs);
               ctrl.signal.addEventListener("abort", () => { clearTimeout(timeout); r(undefined); }, { once: true });
@@ -531,6 +603,7 @@ export async function startDaemon(options: {
       } catch { /* ignore */ }
     }
 
+    try { await status.stop(); } catch { /* ignore */ }
     try { unlinkSync(PID_FILE); } catch { /* ignore */ }
     process.exit(0);
   };

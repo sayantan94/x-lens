@@ -6,7 +6,7 @@ import { BrowserController } from "./browser.js";
 import { createTools } from "./tools.js";
 import { loadSkills, formatSkillsForPrompt } from "./skills.js";
 import { StatusServer } from "./status-server.js";
-import { renderMarkdown, renderError, renderToolStart, renderToolEnd, renderHeader, renderResponseStart, renderResponseEnd } from "./render.js";
+import { renderMarkdown, renderError, renderToolStart, renderToolEnd, renderHeader, renderResponseStart, renderResponseEnd, formatToolLabel, extractResultPreview } from "./render.js";
 import {
 	readMemory,
 	loadSessionMessages,
@@ -127,6 +127,9 @@ export async function runInteractive(options: ReplOptions = {}): Promise<void> {
 	let aborted = false;
 	let needsRetryAfterCompaction = false;
 	let lastInputTokens = 0;
+	let lastOutputTokens = 0;
+	let lastCacheReadTokens = 0;
+	let lastCacheWriteTokens = 0;
 	let turnStartTime = 0;
 
 	const browserToolNames = new Set([
@@ -143,13 +146,16 @@ export async function runInteractive(options: ReplOptions = {}): Promise<void> {
 	};
 
 	async function checkAndCompact(): Promise<void> {
-		if (!shouldCompact(lastInputTokens, model.contextWindow)) return;
+		if (!shouldCompact(lastInputTokens + lastCacheReadTokens, model.contextWindow)) return;
 
 		logCompaction(`Context at ${lastInputTokens} tokens (limit: ${model.contextWindow}). Compacting...`);
 		status.addUpdate({
-			type: "message",
+			type: "tool_start",
 			timestamp: Date.now(),
-			content: "Compacting conversation context...",
+			content: "",
+			toolName: "compaction",
+			toolLabel: "Compacting conversation context...",
+			source: "repl",
 		});
 
 		try {
@@ -171,17 +177,10 @@ export async function runInteractive(options: ReplOptions = {}): Promise<void> {
 		if (event.type === "message_update" && event.assistantMessageEvent.type === "text_delta") {
 			const delta = event.assistantMessageEvent.delta;
 			if (!isStreaming) {
-				// First chunk — show streaming indicator
 				process.stdout.write(chalk.dim("  ● Responding... (Ctrl+C to stop)"));
 				isStreaming = true;
 			}
 			responseText += delta;
-
-			status.addUpdate({
-				type: "message",
-				timestamp: Date.now(),
-				content: delta,
-			});
 		}
 
 		// Tool execution start — show label + args
@@ -190,9 +189,12 @@ export async function runInteractive(options: ReplOptions = {}): Promise<void> {
 			toolStartTimes.set(event.toolCallId, { startTime: Date.now(), args });
 			console.log(renderToolStart(event.toolName, args));
 			status.addUpdate({
-				type: "tool",
+				type: "tool_start",
 				timestamp: Date.now(),
-				content: `${event.toolName} ${JSON.stringify(args)}`,
+				content: "",
+				toolName: event.toolName,
+				toolLabel: formatToolLabel(event.toolName, args),
+				source: "repl",
 			});
 		}
 
@@ -206,6 +208,18 @@ export async function runInteractive(options: ReplOptions = {}): Promise<void> {
 			const isErr = !!(event as any).isError;
 			console.log(renderToolEnd(event.toolName, args, durationMs, event.result, isErr));
 
+			const resultPreview = extractResultPreview(event.result, isErr);
+			status.addUpdate({
+				type: "tool_end",
+				timestamp: Date.now(),
+				content: resultPreview,
+				toolName: event.toolName,
+				toolLabel: formatToolLabel(event.toolName, args),
+				duration: durationMs,
+				isError: isErr,
+				source: "repl",
+			});
+
 			// Browser screenshots for status page
 			if (browserToolNames.has(event.toolName)) {
 				const content = (event.result as any)?.content;
@@ -217,6 +231,7 @@ export async function runInteractive(options: ReplOptions = {}): Promise<void> {
 							timestamp: Date.now(),
 							content: `Screenshot from ${event.toolName}`,
 							screenshot: img.data,
+							source: "repl",
 						});
 					}
 				}
@@ -230,7 +245,10 @@ export async function runInteractive(options: ReplOptions = {}): Promise<void> {
 			// Track usage from assistant messages
 			const msg = event.message as any;
 			if (msg.role === "assistant" && msg.usage) {
-				lastInputTokens = msg.usage.input + (msg.usage.cacheRead || 0);
+				lastInputTokens = msg.usage.input || 0;
+				lastOutputTokens = msg.usage.output || 0;
+				lastCacheReadTokens = msg.usage.cacheRead || 0;
+				lastCacheWriteTokens = msg.usage.cacheWrite || 0;
 
 				// Check for overflow error — flag for compaction + retry after agent_end
 				if (isContextOverflow(msg as AssistantMessage)) {
@@ -319,6 +337,33 @@ export async function runInteractive(options: ReplOptions = {}): Promise<void> {
 				console.log(renderResponseEnd(elapsed, lastInputTokens));
 			}
 
+			// Check for [ALERT] markers
+			if (responseText) {
+				const alertMatch = responseText.match(/\[ALERT\]\s*(.+?)(?:\n|$)/i);
+				if (alertMatch) {
+					status.addUpdate({
+						type: "alert",
+						timestamp: Date.now(),
+						content: alertMatch[1].trim(),
+						source: "repl",
+					});
+				}
+			}
+
+			status.addUpdate({
+				type: "turn_end",
+				timestamp: Date.now(),
+				content: "",
+				tokens: lastInputTokens,
+				inputTokens: lastInputTokens,
+				outputTokens: lastOutputTokens,
+				cacheReadTokens: lastCacheReadTokens,
+				cacheWriteTokens: lastCacheWriteTokens,
+				contextWindow: model.contextWindow,
+				turnDuration: turnStartTime > 0 ? Date.now() - turnStartTime : 0,
+				source: "repl",
+			});
+
 			responseText = "";
 			isStreaming = false;
 			hasError = false;
@@ -400,6 +445,12 @@ export async function runInteractive(options: ReplOptions = {}): Promise<void> {
 
 			agentBusy = true;
 			turnStartTime = Date.now();
+			status.addUpdate({
+				type: "turn_start",
+				timestamp: Date.now(),
+				content: trimmed.length > 100 ? trimmed.slice(0, 100) + "..." : trimmed,
+				source: "repl",
+			});
 
 			try {
 				await agent.prompt(userMessage);
