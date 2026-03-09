@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { StatusServer } from "../status-server";
+import { StatusServer } from "../status-server.js";
 import { readFileSync, writeFileSync, mkdirSync, rmSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
@@ -49,7 +49,7 @@ describe("/api/jobs endpoint", () => {
     writeFileSync(JSONL_PATH, post1 + "\n" + post2 + "\n");
 
     const res = await fetch(`http://localhost:${TEST_PORT}/api/jobs`);
-    const data = await res.json();
+    const data: any = await res.json();
     expect(data).toHaveLength(2);
     expect(data[0].author).toBe("Jane");
     expect(data[1].author).toBe("Bob");
