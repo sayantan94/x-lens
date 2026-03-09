@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { StatusServer } from "../status-server";
 import { readFileSync, writeFileSync, mkdirSync, rmSync, existsSync } from "node:fs";
 import { join } from "node:path";
@@ -31,13 +31,15 @@ describe("/api/jobs endpoint", () => {
     const backup = existsSync(JSONL_PATH) ? readFileSync(JSONL_PATH, "utf-8") : null;
     if (existsSync(JSONL_PATH)) rmSync(JSONL_PATH);
 
-    const res = await fetch(`http://localhost:${TEST_PORT}/api/jobs`);
-    expect(res.status).toBe(200);
-    expect(res.headers.get("content-type")).toContain("application/json");
-    const data = await res.json();
-    expect(data).toEqual([]);
-
-    if (backup !== null) writeFileSync(JSONL_PATH, backup);
+    try {
+      const res = await fetch(`http://localhost:${TEST_PORT}/api/jobs`);
+      expect(res.status).toBe(200);
+      expect(res.headers.get("content-type")).toContain("application/json");
+      const data = await res.json();
+      expect(data).toEqual([]);
+    } finally {
+      if (backup !== null) writeFileSync(JSONL_PATH, backup);
+    }
   });
 
   it("should return parsed posts from JSONL file", async () => {

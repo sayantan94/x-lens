@@ -713,6 +713,531 @@ setInterval(poll, 1500);
 </body>
 </html>`;
 
+const JOBS_HTML = `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>x-lens — Jobs</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #0c0e12;
+    --bg-card: #13161c;
+    --bg-card-hover: #181c24;
+    --bg-tool: #0f1117;
+    --border: #1e2330;
+    --border-active: #2a3040;
+    --text: #c8cdd8;
+    --text-dim: #5c6370;
+    --text-muted: #3e4452;
+    --accent-amber: #e5a93d;
+    --accent-amber-dim: rgba(229, 169, 61, 0.12);
+    --accent-green: #59c98d;
+    --accent-green-dim: rgba(89, 201, 141, 0.12);
+    --accent-red: #e5534b;
+    --accent-red-dim: rgba(229, 83, 75, 0.12);
+    --accent-cyan: #56b6c2;
+    --accent-cyan-dim: rgba(86, 182, 194, 0.12);
+    --accent-purple: #c678dd;
+    --mono: "JetBrains Mono", "SF Mono", "Fira Code", monospace;
+    --sans: "DM Sans", -apple-system, BlinkMacSystemFont, sans-serif;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    font-size: 14px;
+    line-height: 1.5;
+    min-height: 100vh;
+  }
+
+  .header {
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    background: var(--bg);
+    border-bottom: 1px solid var(--border);
+    padding: 16px 24px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    backdrop-filter: blur(12px);
+  }
+
+  .header-left {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+
+  .logo {
+    font-family: var(--mono);
+    font-weight: 700;
+    font-size: 16px;
+    color: var(--accent-amber);
+    letter-spacing: -0.5px;
+  }
+
+  .logo a {
+    color: inherit;
+    text-decoration: none;
+  }
+
+  .logo a:hover {
+    opacity: 0.85;
+  }
+
+  .page-label {
+    font-family: var(--mono);
+    font-size: 12px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    padding: 2px 8px;
+    border-radius: 3px;
+    background: var(--accent-amber-dim);
+    color: var(--accent-amber);
+  }
+
+  .controls {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 24px;
+    border-bottom: 1px solid var(--border);
+    background: rgba(13, 17, 23, 0.5);
+  }
+
+  .search-input {
+    flex: 1;
+    max-width: 360px;
+    padding: 6px 12px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text);
+    font-family: var(--mono);
+    font-size: 12px;
+    outline: none;
+    transition: border-color 0.15s;
+  }
+
+  .search-input:focus {
+    border-color: var(--accent-amber);
+  }
+
+  .search-input::placeholder {
+    color: var(--text-muted);
+  }
+
+  .sort-btn {
+    padding: 4px 12px;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    color: var(--text-dim);
+    font-family: var(--mono);
+    font-size: 11px;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+
+  .sort-btn:hover {
+    background: var(--bg-card-hover);
+    color: var(--text);
+  }
+
+  .sort-btn.active {
+    background: var(--accent-amber-dim);
+    color: var(--accent-amber);
+    border-color: var(--accent-amber);
+  }
+
+  .post-count {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--text-dim);
+    margin-left: auto;
+  }
+
+  .post-count .count-val {
+    color: var(--text);
+    font-weight: 600;
+  }
+
+  .container {
+    max-width: 1100px;
+    margin: 0 auto;
+    padding: 16px 24px;
+  }
+
+  .table-wrapper {
+    overflow-x: auto;
+  }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+  }
+
+  thead th {
+    text-align: left;
+    padding: 8px 12px;
+    font-family: var(--mono);
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--text-muted);
+    border-bottom: 1px solid var(--border);
+    white-space: nowrap;
+    user-select: none;
+  }
+
+  tbody tr {
+    border-bottom: 1px solid rgba(30, 35, 48, 0.5);
+    cursor: pointer;
+    transition: background 0.15s;
+  }
+
+  tbody tr:hover {
+    background: var(--bg-card-hover);
+  }
+
+  tbody tr.expanded-row {
+    cursor: default;
+  }
+
+  tbody tr.expanded-row:hover {
+    background: transparent;
+  }
+
+  tbody td {
+    padding: 10px 12px;
+    vertical-align: top;
+  }
+
+  .score-badge {
+    display: inline-block;
+    font-family: var(--mono);
+    font-size: 12px;
+    font-weight: 600;
+    padding: 2px 8px;
+    border-radius: 4px;
+    min-width: 44px;
+    text-align: center;
+  }
+
+  .score-high {
+    background: var(--accent-green-dim);
+    color: var(--accent-green);
+  }
+
+  .score-mid {
+    background: var(--accent-amber-dim);
+    color: var(--accent-amber);
+  }
+
+  .score-low {
+    background: rgba(92, 99, 112, 0.15);
+    color: var(--text-dim);
+  }
+
+  .author-name {
+    font-weight: 600;
+    color: var(--text);
+  }
+
+  .author-title {
+    font-size: 11px;
+    color: var(--text-dim);
+    margin-top: 2px;
+  }
+
+  .text-snippet {
+    color: var(--text-dim);
+    font-size: 12px;
+    max-width: 300px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .posted-at {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--text-dim);
+    white-space: nowrap;
+  }
+
+  .expanded-row td {
+    padding: 0;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .expanded-content {
+    padding: 16px 24px;
+    background: var(--bg-card);
+    border-left: 3px solid var(--accent-amber);
+  }
+
+  .expanded-text {
+    font-size: 13px;
+    line-height: 1.6;
+    color: var(--text);
+    white-space: pre-wrap;
+    word-break: break-word;
+    margin-bottom: 12px;
+    max-height: 300px;
+    overflow-y: auto;
+  }
+
+  .expanded-meta {
+    display: flex;
+    gap: 16px;
+    align-items: center;
+    flex-wrap: wrap;
+  }
+
+  .expanded-meta span {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--text-dim);
+  }
+
+  .linkedin-link {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--accent-cyan);
+    text-decoration: none;
+  }
+
+  .linkedin-link:hover {
+    text-decoration: underline;
+  }
+
+  .ranking-reason {
+    font-size: 11px;
+    color: var(--text-muted);
+    font-style: italic;
+    margin-top: 8px;
+  }
+
+  .empty-state {
+    text-align: center;
+    padding: 80px 24px;
+    color: var(--text-dim);
+  }
+
+  .empty-state .empty-icon {
+    font-size: 32px;
+    margin-bottom: 12px;
+    opacity: 0.3;
+  }
+
+  .empty-state p {
+    font-size: 13px;
+  }
+</style>
+</head>
+<body>
+<div class="header">
+  <div class="header-left">
+    <div class="logo"><a href="/">x-lens</a></div>
+    <span class="page-label">Jobs</span>
+  </div>
+</div>
+<div class="controls">
+  <input type="text" class="search-input" id="search" placeholder="Search posts...">
+  <button class="sort-btn active" id="sort-score" data-sort="score">Score</button>
+  <button class="sort-btn" id="sort-date" data-sort="date">Date</button>
+  <span class="post-count"><span class="count-val" id="post-count">0</span> posts</span>
+</div>
+<div class="container">
+  <div class="table-wrapper">
+    <div id="content">
+      <div class="empty-state">
+        <div class="empty-icon">&#9671;</div>
+        <p>Loading...</p>
+      </div>
+    </div>
+  </div>
+</div>
+<script>
+var content = document.getElementById("content");
+var searchInput = document.getElementById("search");
+var sortScoreBtn = document.getElementById("sort-score");
+var sortDateBtn = document.getElementById("sort-date");
+var postCountEl = document.getElementById("post-count");
+
+var allPosts = [];
+var currentSort = "score";
+var expandedId = null;
+
+function escapeHtml(text) {
+  var el = document.createElement("span");
+  el.textContent = text || "";
+  return el.innerHTML;
+}
+
+function scoreClass(score) {
+  if (score > 0.7) return "score-high";
+  if (score >= 0.5) return "score-mid";
+  return "score-low";
+}
+
+function truncate(text, len) {
+  if (!text) return "";
+  return text.length > len ? text.substring(0, len) + "..." : text;
+}
+
+function filterPosts(posts, query) {
+  if (!query) return posts;
+  var q = query.toLowerCase();
+  return posts.filter(function(p) {
+    var searchable = [p.author, p.authorTitle, p.company, p.text, p.location, p.seniority].join(" ").toLowerCase();
+    return searchable.includes(q);
+  });
+}
+
+function parseRelativeDate(str) {
+  if (!str) return 0;
+  var s = str.toLowerCase().trim();
+  var m = s.match(/^(\\d+)\\s*([a-z])/);
+  if (!m) return 0;
+  var n = parseInt(m[1], 10);
+  var unit = m[2];
+  if (unit === "s") return n;
+  if (unit === "m") return n * 60;
+  if (unit === "h") return n * 3600;
+  if (unit === "d") return n * 86400;
+  if (unit === "w") return n * 604800;
+  if (unit === "y") return n * 31536000;
+  return 0;
+}
+
+function sortPosts(posts, sortBy) {
+  return posts.slice().sort(function(a, b) {
+    if (sortBy === "score") return (b.relevanceScore || 0) - (a.relevanceScore || 0);
+    // Sort by date: use capturedAt (ISO timestamp) if available, then postedAt (relative)
+    var dateA = a.capturedAt ? new Date(a.capturedAt).getTime() : 0;
+    var dateB = b.capturedAt ? new Date(b.capturedAt).getTime() : 0;
+    if (dateA && dateB) return dateB - dateA;
+    // Fallback to relative posted time (smaller relative = more recent)
+    var relA = parseRelativeDate(a.postedAt);
+    var relB = parseRelativeDate(b.postedAt);
+    return relA - relB;
+  });
+}
+
+function renderTable(posts) {
+  if (posts.length === 0) {
+    var q = searchInput.value;
+    if (q) {
+      content.innerHTML = '<div class="empty-state"><div class="empty-icon">&#9671;</div><p>No posts match "' + escapeHtml(q) + '"</p></div>';
+    } else {
+      content.innerHTML = '<div class="empty-state"><div class="empty-icon">&#9671;</div><p>No posts collected yet. Run a LinkedIn search first.</p></div>';
+    }
+    postCountEl.textContent = "0";
+    return;
+  }
+
+  postCountEl.textContent = String(posts.length);
+
+  var html = '<table><thead><tr>' +
+    '<th>Score</th><th>Author</th><th>Company</th><th>Location</th><th>Seniority</th><th>Posted</th><th>Text</th>' +
+    '</tr></thead><tbody>';
+
+  for (var i = 0; i < posts.length; i++) {
+    var p = posts[i];
+    var id = p.id || p.url || String(i);
+    var isExpanded = expandedId === id;
+    var score = typeof p.relevanceScore === "number" ? p.relevanceScore.toFixed(2) : "\\u2014";
+
+    html += '<tr data-id="' + escapeHtml(id) + '">' +
+      '<td><span class="score-badge ' + scoreClass(p.relevanceScore || 0) + '">' + score + '</span></td>' +
+      '<td><div class="author-name">' + escapeHtml(p.author) + '</div>' +
+      '<div class="author-title">' + escapeHtml(truncate(p.authorTitle, 40)) + '</div></td>' +
+      '<td>' + escapeHtml(p.company || "\\u2014") + '</td>' +
+      '<td>' + escapeHtml(p.location || "\\u2014") + '</td>' +
+      '<td>' + escapeHtml(p.seniority || "\\u2014") + '</td>' +
+      '<td><span class="posted-at">' + escapeHtml(p.postedAt || "\\u2014") + '</span></td>' +
+      '<td><span class="text-snippet">' + escapeHtml(truncate(p.text, 80)) + '</span></td>' +
+      '</tr>';
+
+    if (isExpanded) {
+      html += '<tr class="expanded-row"><td colspan="7"><div class="expanded-content">' +
+        '<div class="expanded-text">' + escapeHtml(p.text) + '</div>' +
+        '<div class="expanded-meta">' +
+        (p.url && p.url.startsWith("https://") ? '<a href="' + escapeHtml(p.url) + '" target="_blank" rel="noopener" class="linkedin-link">View on LinkedIn &#8599;</a>' : '') +
+        (p.capturedAt ? '<span>Captured: ' + escapeHtml(new Date(p.capturedAt).toLocaleDateString()) + '</span>' : '') +
+        (p.searchQuery ? '<span>Query: ' + escapeHtml(p.searchQuery) + '</span>' : '') +
+        '</div>' +
+        (p.rankingReason ? '<div class="ranking-reason">' + escapeHtml(p.rankingReason) + '</div>' : '') +
+        '</div></td></tr>';
+    }
+  }
+
+  html += '</tbody></table>';
+  content.innerHTML = html;
+}
+
+function refresh() {
+  var query = searchInput.value;
+  var posts = filterPosts(allPosts, query);
+  posts = sortPosts(posts, currentSort);
+  renderTable(posts);
+}
+
+// Event: row click to expand/collapse
+content.addEventListener("click", function(e) {
+  var link = e.target.closest("a");
+  if (link) return; // let link clicks through
+  var row = e.target.closest("tr[data-id]");
+  if (!row) return;
+  var id = row.getAttribute("data-id");
+  expandedId = expandedId === id ? null : id;
+  refresh();
+});
+
+// Event: search
+searchInput.addEventListener("input", refresh);
+
+// Event: sort buttons
+sortScoreBtn.addEventListener("click", function() {
+  currentSort = "score";
+  sortScoreBtn.classList.add("active");
+  sortDateBtn.classList.remove("active");
+  refresh();
+});
+
+sortDateBtn.addEventListener("click", function() {
+  currentSort = "date";
+  sortDateBtn.classList.add("active");
+  sortScoreBtn.classList.remove("active");
+  refresh();
+});
+
+// Load data
+fetch("/api/jobs")
+  .then(function(r) { return r.json(); })
+  .then(function(data) {
+    allPosts = data;
+    refresh();
+  })
+  .catch(function() {
+    content.innerHTML = '<div class="empty-state"><div class="empty-icon">&#9671;</div><p>Failed to load posts. Is the server running?</p></div>';
+  });
+</script>
+</body>
+</html>`;
+
 export class StatusServer {
   private updates: StatusUpdate[] = [];
   private server: ReturnType<typeof createServer> | null = null;
@@ -747,6 +1272,12 @@ export class StatusServer {
         }
         res.writeHead(200, { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" });
         res.end(JSON.stringify(posts));
+        return;
+      }
+
+      if (req.url === "/jobs") {
+        res.writeHead(200, { "Content-Type": "text/html" });
+        res.end(JOBS_HTML);
         return;
       }
 
