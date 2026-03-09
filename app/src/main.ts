@@ -38,6 +38,7 @@ daemon
   .description("Start the daemon (foreground)")
   .option("--provider <provider>", "AI provider", process.env.X_LENS_PROVIDER || "bedrock")
   .option("--model <model>", "Override model ID")
+  .option("--persona <persona>", "Persona to run (default: trader)", "trader")
   .action(async (options) => {
     const { startDaemon } = await import("./daemon.js");
     await startDaemon(options);

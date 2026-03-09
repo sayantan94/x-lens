@@ -304,9 +304,11 @@ async function executeJob(
 export async function startDaemon(options: {
   provider?: string;
   model?: string;
+  persona?: string;
 } = {}): Promise<void> {
   const provider = options.provider || process.env.X_LENS_PROVIDER || "bedrock";
   const modelId = options.model;
+  const persona = options.persona || "trader";
   const projectRoot = new URL("../..", import.meta.url).pathname;
   const jobStore = new JobStore();
 
@@ -316,11 +318,12 @@ export async function startDaemon(options: {
   writeFileSync(PID_FILE, String(process.pid), "utf-8");
 
   log("=== x-lens daemon starting ===");
-  log(`Provider: ${provider}, PID: ${process.pid}`);
+  log(`Provider: ${provider}, Persona: ${persona}, PID: ${process.pid}`);
 
-  // Seed default trader jobs if store is empty
-  if (jobStore.list().length === 0) {
-    log("No jobs found — seeding default trader monitoring schedule");
+  // Seed default jobs if none exist for this persona
+  const existingForPersona = jobStore.list().filter((j) => j.persona === persona);
+  if (existingForPersona.length === 0 && persona === "trader") {
+    log(`No jobs found for persona "${persona}" — seeding default monitoring schedule`);
 
     const defaultJobs: CreateJobInput[] = [
       {
@@ -408,7 +411,7 @@ export async function startDaemon(options: {
     for (const [, ctrl] of continuousAborts) ctrl.abort();
     continuousAborts.clear();
 
-    const currentJobs = jobStore.list().filter((j) => j.enabled);
+    const currentJobs = jobStore.list().filter((j) => j.enabled && j.persona === persona);
 
     for (const job of currentJobs) {
       if (job.type === "cron" && job.schedule) {
@@ -457,7 +460,7 @@ export async function startDaemon(options: {
 
   // Re-read jobs periodically to pick up agent-created schedules
   const jobCheckInterval = setInterval(() => {
-    const newJobs = jobStore.list().filter((j) => j.enabled);
+    const newJobs = jobStore.list().filter((j) => j.enabled && j.persona === persona);
     const currentScheduled = cronTasks.length + intervals.length + continuousAborts.size;
     if (newJobs.length !== currentScheduled) {
       log("Job store changed — rescheduling...");
