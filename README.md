@@ -24,8 +24,13 @@ skills/
 │   ├── vcp-screener/
 │   ├── technical-analyst/
 │   └── ...
-└── predictor/           # --persona predictor (1 skill)
-    └── prediction-markets/  
+├── predictor/           # --persona predictor (1 skill)
+│   └── prediction-markets/
+└── job-finder/          # --persona job-finder (4 skills)
+    ├── linkedin-search/
+    ├── post-extraction/
+    ├── post-ranking/
+    └── linkedin-login/
 ```
 
 - **Global skills** (`skills/global/`) — loaded for every persona
@@ -48,6 +53,7 @@ When you run `x-lens --persona trader`, the agent:
 |---------|------|--------|-------|
 | **trader** | `--persona trader` | ~40 | Market analysis, screening, earnings, strategy, portfolio, options, OI analysis |
 | **predictor** | `--persona predictor` | 1 | Prediction market trading on Polymarket & Kalshi |
+| **job-finder** | `--persona job-finder` | 4 | LinkedIn hiring post search, extraction, and ranking |
 
 ### Global Skills
 
@@ -325,6 +331,47 @@ The agent can create new jobs, delete old ones, and adapt its monitoring based o
 
 Each persona gets its own persistent session file (`~/.x-lens/sessions/<persona>.jsonl`). The daemon resumes context across restarts — the agent remembers what it found in previous runs.
 
+## Job-Finder Persona
+
+The `job-finder` persona searches LinkedIn for hiring posts and saves ranked results.
+
+### Setup
+
+1. Create LinkedIn credentials file:
+```bash
+echo "email=your@email.com" > ~/.x-lens/.linkedin-creds
+echo "password=yourpassword" >> ~/.x-lens/.linkedin-creds
+```
+
+2. Log in manually once (for 2FA/CAPTCHA):
+```bash
+x-lens --persona job-finder --visible
+# Then say: "Log into LinkedIn"
+```
+
+3. Create a search job:
+```bash
+x-lens --persona job-finder "find posts about hiring senior+ backend engineers at FAANG in Seattle"
+```
+
+4. Or run as daemon:
+```bash
+x-lens daemon start --persona job-finder
+```
+
+### Results
+
+Results are saved to `~/.x-lens/linkedin-posts.jsonl` — one JSON object per line with author, company, text, URL, relevance score, and ranking reason.
+
+### Skills
+
+| Skill | Purpose |
+|-------|---------|
+| `linkedin-search` | Decompose prompts into search queries |
+| `post-extraction` | Extract structured data from LinkedIn DOM |
+| `post-ranking` | Score and rank posts by relevance |
+| `linkedin-login` | Handle authentication and 2FA |
+
 ## Memory & Persistence
 
 x-lens stores persistent data in `~/.x-lens/`:
@@ -338,6 +385,7 @@ x-lens stores persistent data in `~/.x-lens/`:
 | Daemon log | `~/.x-lens/daemon.log` | Daemon stdout/stderr when running via launchd. |
 | Browser profile | `~/.x-lens/browser-profile/` | Persistent Chromium profile — cookies, auth, localStorage survive across runs. |
 | OI cache | `~/.x-lens/oi-cache/` | Cached open interest data for day-over-day delta calculations. |
+| LinkedIn posts | `~/.x-lens/linkedin-posts.jsonl` | Job-finder results — one JSON object per line with author, company, text, URL, relevance score, and ranking reason. |
 
 The agent can read and write its own memory during a session. It will remember things like your preferences, frequently used sites, and useful context across conversations.
 
@@ -398,7 +446,8 @@ x-lens/
 ├── skills/          # All skills (global + per-persona)
 │   ├── global/      # Always loaded
 │   ├── trader/      # Trading & market analysis skills
-│   └── predictor/   # Prediction market skills
+│   ├── predictor/   # Prediction market skills
+│   └── job-finder/  # LinkedIn hiring post search & ranking
 ├── .env             # Credentials (git-ignored)
 └── .env.example     # Credential template
 ```
