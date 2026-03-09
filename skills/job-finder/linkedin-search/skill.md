@@ -68,6 +68,8 @@ CRITICAL: The search results page often does NOT include the actual LinkedIn pos
 3. Sort by recency (most recent first)
 4. Load the `post-ranking` skill via `skill_read` to score and save results
 
+CRITICAL: ALL posts from ALL searches MUST be saved to the same file: `~/.x-lens/linkedin-posts.jsonl`. Do NOT create separate files per search query or per run. The `/jobs` UI page reads from this file to display results. Append new posts to the existing file — the post-ranking skill handles deduplication by post ID.
+
 ## Performance Notes
 - Take your time with each query — quality extraction matters more than speed
 - Do not skip the screenshot verification steps
