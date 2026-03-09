@@ -302,15 +302,20 @@ async function executeJob(
     const summary = responseText.slice(0, 200);
     jobStore.recordRun(job.id, new Date().toISOString(), summary);
 
-    // Check for [ALERT] markers — send notification
+    // Send notification for every completed run
     if (job.notify && responseText) {
-      const alertMatch = responseText.match(/\[ALERT\]\s*(.+?)(?:\n|$)/);
+      // Check for [ALERT] markers — use as notification title if present
+      const alertMatch = responseText.match(/\[ALERT\]\s*(.+?)(?:\n|$)/i);
       if (alertMatch) {
         const alertParts = alertMatch[1].split("|").map((s) => s.trim());
-        const title = `[${job.persona.toUpperCase()}] ${alertParts[0]}`;
+        const title = `🚨 ${alertParts[0]}`;
         const body = alertParts[1] || summary;
         notify(title, body);
-        log(`[${job.persona}] Notification sent: ${title}`);
+        log(`[${job.persona}] Alert notification: ${title}`);
+      } else {
+        // No alert — still notify with job summary
+        notify(`${job.id}`, summary.slice(0, 200));
+        log(`[${job.persona}] Summary notification for ${job.id}`);
       }
     }
 
@@ -331,7 +336,7 @@ async function executeJob(
     const msg = err instanceof Error ? err.message : String(err);
     logError(`[${job.persona}] Job "${job.id}" failed: ${msg}`);
     if (job.notify) {
-      notify(`[${job.persona.toUpperCase()}] Job Failed`, `${job.id}: ${msg}`, "Basso");
+      notify(`[${job.persona.toUpperCase()}] Job Failed`, `${job.id}: ${msg}`);
     }
   } finally {
     unsubscribe();
