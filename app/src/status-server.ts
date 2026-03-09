@@ -1,5 +1,5 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { readFileSync, existsSync } from "node:fs";
+import { readFileSync, existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 
@@ -1241,6 +1241,11 @@ fetch("/api/jobs")
 export class StatusServer {
   private updates: StatusUpdate[] = [];
   private server: ReturnType<typeof createServer> | null = null;
+  private jobsDir: string;
+
+  constructor(jobsDir?: string) {
+    this.jobsDir = jobsDir ?? join(homedir(), ".x-lens");
+  }
 
   addUpdate(update: StatusUpdate): void {
     this.updates.push(update);
@@ -1256,17 +1261,20 @@ export class StatusServer {
       }
 
       if (req.url === "/api/jobs") {
-        const jsonlPath = join(homedir(), ".x-lens", "linkedin-posts.jsonl");
+        const xlensDir = this.jobsDir;
         let posts: unknown[] = [];
-        if (existsSync(jsonlPath)) {
-          const content = readFileSync(jsonlPath, "utf-8");
-          for (const line of content.split("\n")) {
-            const trimmed = line.trim();
-            if (!trimmed) continue;
-            try {
-              posts.push(JSON.parse(trimmed));
-            } catch {
-              // Skip malformed lines
+        if (existsSync(xlensDir)) {
+          const jsonlFiles = readdirSync(xlensDir).filter(f => f.endsWith(".jsonl"));
+          for (const file of jsonlFiles) {
+            const content = readFileSync(join(xlensDir, file), "utf-8");
+            for (const line of content.split("\n")) {
+              const trimmed = line.trim();
+              if (!trimmed) continue;
+              try {
+                posts.push(JSON.parse(trimmed));
+              } catch {
+                // Skip malformed lines
+              }
             }
           }
         }

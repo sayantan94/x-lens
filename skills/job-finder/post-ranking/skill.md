@@ -54,6 +54,8 @@ For each qualifying post (score >= 0.3):
 
    - Expected: New posts appended to `~/.x-lens/linkedin-posts.jsonl`, duplicates skipped
 
+CRITICAL: Always save to `~/.x-lens/linkedin-posts.jsonl` — this exact filename. Do NOT create per-search or per-query files. The `/jobs` UI reads all `.jsonl` files from `~/.x-lens/`, but the canonical file is `linkedin-posts.jsonl`. All posts from all searches go into this single file.
+
 **JSONL record fields**: id, url, author, authorTitle, company, text (first 500 chars), postedAt, capturedAt (ISO 8601), searchQuery, sourcePrompt, relevanceScore, rankingReason, seniority, location
 
 ### Step 5: Summary Report
