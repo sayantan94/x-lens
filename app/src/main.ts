@@ -35,13 +35,49 @@ const daemon = program.command("daemon").description("Manage the x-lens backgrou
 
 daemon
   .command("start")
-  .description("Start the daemon (foreground)")
+  .description("Start the daemon in the background")
   .option("--provider <provider>", "AI provider", process.env.X_LENS_PROVIDER || "bedrock")
   .option("--model <model>", "Override model ID")
   .option("--persona <persona>", "Persona to run (default: trader)", "trader")
+  .option("--foreground", "Run in foreground (don't daemonize)")
   .action(async (options) => {
-    const { startDaemon } = await import("./daemon.js");
-    await startDaemon(options);
+    const { getDaemonPid } = await import("./daemon.js");
+    const existingPid = getDaemonPid();
+    if (existingPid) {
+      console.log(`Daemon already running (PID: ${existingPid}). Use 'x-lens daemon stop' first.`);
+      return;
+    }
+
+    if (options.foreground) {
+      const { startDaemon } = await import("./daemon.js");
+      await startDaemon(options);
+      return;
+    }
+
+    // Spawn detached background process
+    const { spawn } = await import("node:child_process");
+    const { join } = await import("node:path");
+    const { homedir } = await import("node:os");
+    const { existsSync, mkdirSync, openSync } = await import("node:fs");
+
+    const logDir = join(homedir(), ".x-lens");
+    if (!existsSync(logDir)) mkdirSync(logDir, { recursive: true });
+    const logPath = join(logDir, "daemon.log");
+    const logFd = openSync(logPath, "a");
+
+    const args = ["daemon", "start", "--foreground"];
+    if (options.provider) args.push("--provider", options.provider);
+    if (options.model) args.push("--model", options.model);
+    if (options.persona) args.push("--persona", options.persona);
+
+    const child = spawn(process.execPath, [process.argv[1], ...args], {
+      detached: true,
+      stdio: ["ignore", logFd, logFd],
+      env: process.env,
+    });
+
+    child.unref();
+    console.log(`Daemon started (PID: ${child.pid}). Logs: ${logPath}`);
   });
 
 daemon

@@ -218,10 +218,47 @@ async function executeJob(
 
   let responseText = "";
   let hasError = false;
+  const toolStartTimes = new Map<string, { startTime: number; name: string }>();
 
   const unsubscribe = pa.agent.subscribe((event: AgentEvent) => {
     if (event.type === "message_update" && event.assistantMessageEvent.type === "text_delta") {
       responseText += event.assistantMessageEvent.delta;
+    }
+
+    // Tool execution start — log tool name + args
+    if (event.type === "tool_execution_start") {
+      const args = (event.args ?? {}) as Record<string, unknown>;
+      toolStartTimes.set(event.toolCallId, { startTime: Date.now(), name: event.toolName });
+      const argSummary = Object.entries(args)
+        .map(([k, v]) => {
+          const val = typeof v === "string" && v.length > 100 ? v.slice(0, 100) + "..." : String(v);
+          return `${k}=${val}`;
+        })
+        .join(", ");
+      log(`[${job.persona}] ▶ ${event.toolName}(${argSummary})`);
+    }
+
+    // Tool execution end — log result preview + duration
+    if (event.type === "tool_execution_end") {
+      const started = toolStartTimes.get(event.toolCallId);
+      const durationMs = started ? Date.now() - started.startTime : 0;
+      const durationStr = durationMs > 1000 ? `${(durationMs / 1000).toFixed(1)}s` : `${durationMs}ms`;
+      toolStartTimes.delete(event.toolCallId);
+
+      const isErr = !!(event as any).isError;
+      const result = event.result as any;
+      let preview = "";
+      if (result?.content) {
+        const textPart = Array.isArray(result.content)
+          ? result.content.find((c: any) => c.type === "text")?.text
+          : typeof result.content === "string" ? result.content : "";
+        if (textPart) {
+          preview = ` → ${textPart.slice(0, 150).replace(/\n/g, " ")}`;
+          if (textPart.length > 150) preview += "...";
+        }
+      }
+      const icon = isErr ? "✗" : "✓";
+      log(`[${job.persona}] ${icon} ${event.toolName} (${durationStr})${preview}`);
     }
 
     if (event.type === "message_end") {
@@ -229,10 +266,16 @@ async function executeJob(
       const msg = event.message as any;
       if (msg.role === "assistant" && msg.usage) {
         pa.lastInputTokens = msg.usage.input + (msg.usage.cacheRead || 0);
+        log(`[${job.persona}] tokens: ${msg.usage.input} input, ${msg.usage.output} output`);
       }
     }
 
     if (event.type === "agent_end") {
+      // Log the final response
+      if (responseText) {
+        log(`[${job.persona}] Response:\n${responseText}`);
+      }
+
       if (event.messages?.length) {
         for (const msg of event.messages) {
           const errorMsg = (msg as any).errorMessage;
