@@ -28,9 +28,14 @@ Works on standard LinkedIn feed pages where posts have `data-urn` attributes.
       const timeEl = post.querySelector('.update-components-actor__sub-description span[aria-hidden="true"]');
       const postedAt = timeEl ? timeEl.innerText.trim() : '';
 
+      // Try <a> tag first, then construct from data-urn attribute
       const linkEl = post.querySelector('a[href*="/feed/update/"]')
         || post.querySelector('a[href*="urn:li:activity"]');
-      const url = linkEl ? linkEl.href.split('?')[0] : '';
+      let url = linkEl ? linkEl.href.split('?')[0] : '';
+      if (!url) {
+        const urn = post.getAttribute('data-urn');
+        if (urn) url = 'https://www.linkedin.com/feed/update/' + urn;
+      }
 
       if (text.length > 10 || author !== 'Unknown') {
         results.push({ author, authorTitle, text, url, postedAt });
@@ -66,8 +71,14 @@ Alternative feed layout. Use when Strategy 1 returns 0 results.
       const timeEl = post.querySelector('.update-components-actor__sub-description span[aria-hidden="true"]');
       const postedAt = timeEl ? timeEl.innerText.trim() : '';
 
+      // Try <a> tag first, then construct from data-urn on self or parent
       const linkEl = post.querySelector('a[href*="/feed/update/"]');
-      const url = linkEl ? linkEl.href.split('?')[0] : '';
+      let url = linkEl ? linkEl.href.split('?')[0] : '';
+      if (!url) {
+        const urnEl = post.closest('[data-urn*="urn:li:activity"]') || post.querySelector('[data-urn*="urn:li:activity"]');
+        const urn = urnEl ? urnEl.getAttribute('data-urn') : null;
+        if (urn) url = 'https://www.linkedin.com/feed/update/' + urn;
+      }
 
       if (text.length > 10 || author !== 'Unknown') {
         results.push({ author, authorTitle, text, url, postedAt });
