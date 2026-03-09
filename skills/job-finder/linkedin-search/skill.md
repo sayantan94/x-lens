@@ -45,7 +45,24 @@ For each search results page, perform **3 rounds** of scroll-and-extract:
 3. **Deduplicate**: Compare new posts against already-collected ones by URL
 4. **Stop condition**: If a round yields zero new posts, stop scrolling for this query
 
-### Step 5: Compile and Hand Off
+### Step 5: Click Into Posts for Details
+For each extracted post that looks like a hiring post (has hiring keywords in text):
+
+1. Click on the post to open its detail/permalink view
+2. Wait 2 seconds for the page to load
+3. Capture the **actual LinkedIn post URL** from the browser's address bar (`window.location.href`)
+   - Expected: URL like `https://www.linkedin.com/feed/update/urn:li:activity:...`
+   - This is the real permalink — update the post's `url` field with it
+4. Optionally extract fuller post text from the detail view if the search result snippet was truncated
+5. Navigate back to the search results page
+6. Pause 1-2 seconds before the next click
+
+CRITICAL: The search results page often does NOT include the actual LinkedIn post URL — it may show job listing links instead. You MUST click into the post to get the real LinkedIn permalink. Without this, the "View on LinkedIn" link in the jobs UI will be broken.
+
+   - If clicking a post opens a modal/overlay instead of a new page: extract the URL from the modal's share button or the overlay's URL
+   - If the page changes away from search results: use browser back navigation to return
+
+### Step 6: Compile and Hand Off
 1. Merge posts from all queries
 2. Deduplicate across queries by URL (or by author + first 100 chars of text if no URL)
 3. Sort by recency (most recent first)
@@ -65,9 +82,10 @@ Actions:
 1. Generate queries: "senior backend engineer hiring Amazon Seattle", "Google Seattle engineering team hiring", "#hiring senior engineer Seattle FAANG", "Meta backend engineer open role Seattle", "we're hiring staff engineer Amazon"
 2. Execute 5 searches on LinkedIn content
 3. Scroll and extract ~15 posts per search
-4. Deduplicate across all results
+4. Click into top hiring posts to capture LinkedIn permalinks
+5. Deduplicate across all results
 
-Result: 47 unique posts extracted, passed to post-ranking skill
+Result: 47 unique posts with LinkedIn permalinks, passed to post-ranking skill
 
 ### Example 2: Broad industry search
 User says: "Any AI startups hiring ML engineers in SF?"
@@ -75,8 +93,9 @@ User says: "Any AI startups hiring ML engineers in SF?"
 Actions:
 1. Generate queries: "AI startup hiring ML engineer San Francisco", "machine learning engineer startup SF", "#hiring ML engineer Bay Area", "join my team AI engineer San Francisco"
 2. Execute 4 searches, extract posts
+3. Click into each post to get real LinkedIn URL
 
-Result: 23 unique posts extracted
+Result: 23 unique posts with permalinks extracted
 
 ## Troubleshooting
 
