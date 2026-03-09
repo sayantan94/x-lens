@@ -494,8 +494,6 @@ function formatDuration(ms) {
   return (ms / 1000).toFixed(1) + "s";
 }
 
-let screenshotCounter = 0;
-
 function formatTokens(n) {
   if (!n) return "0";
   if (n >= 1000000) return (n / 1000000).toFixed(1) + "M";
@@ -582,11 +580,10 @@ function renderTurns(turns) {
           '<div class="tool-duration">' + formatDuration(item.duration) + '</div></div>';
       }
       if (item.type === "screenshot") {
-        const sid = "ss-" + (screenshotCounter++);
         return '<div class="screenshot-row">' +
-          '<div class="screenshot-toggle" onclick="toggleSS(\\'' + sid + '\\')">' +
-          '<span>▸</span> screenshot</div>' +
-          '<div class="screenshot-container" id="' + sid + '">' +
+          '<div class="screenshot-toggle" data-action="toggle-ss">' +
+          '<span class="ss-chevron">▸</span> screenshot</div>' +
+          '<div class="screenshot-container">' +
           '<img src="data:image/png;base64,' + item.screenshot + '" loading="lazy">' +
           '</div></div>';
       }
@@ -624,9 +621,9 @@ function renderTurns(turns) {
     }
 
     return '<div class="turn-card' + alertClass + '">' +
-      '<div class="turn-header" onclick="toggleTurn(\\'' + turnId + '\\')">' +
+      '<div class="turn-header" data-action="toggle-turn">' +
       '<div class="turn-header-left">' +
-      '<span class="chevron' + chevronClass + '" id="chev-' + turnId + '">▸</span>' +
+      '<span class="chevron' + chevronClass + '">▸</span>' +
       '<span class="turn-source' + sourceClass + '">' + escapeHtml(turn.source) + '</span>' +
       '<span class="turn-label">' + escapeHtml(turn.label) + '</span>' +
       '</div>' +
@@ -636,7 +633,7 @@ function renderTurns(turns) {
       (turn.outputTokens > 0 ? '<span style="color:var(--accent-amber)">' + formatTokens(turn.outputTokens) + ' out</span>' : '') +
       '<span>' + formatTime(turn.timestamp) + '</span>' +
       '</div></div>' +
-      '<div class="turn-body' + bodyClass + '" id="' + turnId + '">' +
+      '<div class="turn-body' + bodyClass + '">' +
       itemsHtml + tokenBarHtml + '</div></div>';
   }).join("");
 
@@ -654,24 +651,32 @@ function renderTurns(turns) {
   statCache.textContent = formatTokens(totalCache);
 }
 
-function toggleTurn(id) {
-  const body = document.getElementById(id);
-  const chev = document.getElementById("chev-" + id);
-  if (body) body.classList.toggle("collapsed");
-  if (chev) chev.classList.toggle("open");
-}
+// Event delegation — handles all clicks
+feed.addEventListener("click", function(e) {
+  const target = e.target.closest("[data-action]");
+  if (!target) return;
 
-function toggleSS(id) {
-  const el = document.getElementById(id);
-  if (el) el.classList.toggle("open");
-}
+  const action = target.getAttribute("data-action");
 
-// Make functions available globally
-window.toggleTurn = toggleTurn;
-window.toggleSS = toggleSS;
+  if (action === "toggle-turn") {
+    const card = target.closest(".turn-card");
+    if (!card) return;
+    const body = card.querySelector(".turn-body");
+    const chev = card.querySelector(".chevron");
+    if (body) body.classList.toggle("collapsed");
+    if (chev) chev.classList.toggle("open");
+  }
+
+  if (action === "toggle-ss") {
+    const container = target.nextElementSibling;
+    const chevron = target.querySelector(".ss-chevron");
+    if (container) container.classList.toggle("open");
+    if (chevron) chevron.textContent = container && container.classList.contains("open") ? "▾" : "▸";
+  }
+});
 
 let lastLen = 0;
-let isActive = false;
+let lastDataLen = 0;
 
 async function poll() {
   try {
@@ -679,10 +684,15 @@ async function poll() {
     const data = await res.json();
     headerStatus.textContent = formatTime(Date.now());
 
-    const turns = buildTurns(data);
-    renderTurns(turns);
+    // Only re-render if data changed
+    if (data.length !== lastDataLen) {
+      lastDataLen = data.length;
+      const turns = buildTurns(data);
+      renderTurns(turns);
+    }
 
-    // Check if agent is currently active (last event is tool_start or turn_start without turn_end)
+    // Update pulse based on latest data
+    const turns = buildTurns(data);
     const lastTurn = turns[turns.length - 1];
     const hasOpenTurn = lastTurn && !lastTurn.tokens;
     pulse.className = hasOpenTurn ? "pulse" : "pulse idle";
