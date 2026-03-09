@@ -589,6 +589,10 @@ export async function startDaemon(options: {
     }
   }
 
+  if (existingForPersona.length === 0 && persona !== "trader") {
+    log(`No jobs found for persona "${persona}". Create jobs via REPL: x-lens --persona ${persona} "your prompt here"`);
+  }
+
   const jobs = jobStore.list();
   log(`Loaded ${jobs.length} jobs from store`);
 
