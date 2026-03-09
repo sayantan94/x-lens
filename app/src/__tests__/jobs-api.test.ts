@@ -64,4 +64,14 @@ describe("/api/jobs endpoint", () => {
     const data = await res.json();
     expect(data).toHaveLength(2);
   });
+
+  it("should serve HTML page at /jobs", async () => {
+    const res = await fetch(`http://localhost:${TEST_PORT}/jobs`);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain("text/html");
+    const html = await res.text();
+    expect(html).toContain("x-lens");
+    expect(html).toContain("Jobs");
+    expect(html).toContain("/api/jobs");
+  });
 });
