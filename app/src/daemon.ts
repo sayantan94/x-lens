@@ -307,7 +307,7 @@ export async function startDaemon(options: {
   persona?: string;
 } = {}): Promise<void> {
   const provider = options.provider || process.env.X_LENS_PROVIDER || "bedrock";
-  const modelId = options.model;
+  const modelId = options.model || process.env.X_LENS_MODEL;
   const persona = options.persona || "trader";
   const projectRoot = new URL("../..", import.meta.url).pathname;
   const jobStore = new JobStore();

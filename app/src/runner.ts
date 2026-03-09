@@ -17,10 +17,11 @@ export interface RunOptions {
 
 function resolveModel(options: RunOptions) {
 	const provider = options.provider || "bedrock";
+	const modelId = options.model || process.env.X_LENS_MODEL;
 	if (provider === "anthropic") {
-		return getModel("anthropic", (options.model || "claude-sonnet-4-20250514") as any);
+		return getModel("anthropic", (modelId || "claude-sonnet-4-20250514") as any);
 	}
-	return getModel("amazon-bedrock", (options.model || "anthropic.claude-sonnet-4-20250514-v1:0") as any);
+	return getModel("amazon-bedrock", (modelId || "anthropic.claude-sonnet-4-20250514-v1:0") as any);
 }
 
 function convertToLlm(messages: Message[]): Message[] {

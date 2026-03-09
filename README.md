@@ -171,6 +171,7 @@ MCP_MARKET_DATA_EXECUTABLE=/path/to/mcp-market-data-server
 | Variable | Required | Description |
 |----------|----------|-------------|
 | `X_LENS_PROVIDER` | No | Default provider: `bedrock` or `anthropic` (default: `bedrock`) |
+| `X_LENS_MODEL` | No | Model ID override (e.g., `claude-sonnet-4-20250514` for Anthropic, `anthropic.claude-sonnet-4-20250514-v1:0` for Bedrock) |
 | `ANTHROPIC_API_KEY` | If using anthropic | Anthropic API key |
 | `AWS_PROFILE` | If using bedrock | AWS CLI profile name |
 | `AWS_ACCESS_KEY_ID` | If using bedrock (no profile) | AWS access key |
