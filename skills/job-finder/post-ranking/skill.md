@@ -1,176 +1,137 @@
 ---
 name: post-ranking
-description: Analyze and rank LinkedIn hiring posts by relevance, seniority match, location, and company fit
-triggers: [rank posts, score posts, analyze posts, relevance, ranking]
+description: Score and rank LinkedIn hiring posts by relevance to job search criteria. Use when extracted posts need filtering and saving. Scores on direct hiring signal, seniority match, location, company fit, and recency. Saves qualifying posts to ~/.x-lens/linkedin-posts.jsonl.
+triggers: [rank posts, score posts, analyze posts, relevance, ranking, filter jobs, rate posts]
 ---
+
+# Post Ranking
 
 ## Instructions
 
-This skill takes a collection of extracted LinkedIn posts (from memory or prior search results) and scores each post on how relevant it is to the user's job search criteria. Posts are ranked, filtered by confidence, deduplicated, and saved to `~/.x-lens/linkedin-posts.jsonl`.
-
 ### Step 1: Gather Inputs
+1. Read the user's original search prompt to identify: target role, seniority level, preferred location, target companies or company types
+2. Load extracted posts from the previous `linkedin-search` / `post-extraction` step
 
-1. Read the user's original search prompt to understand their target role, seniority, location, and company preferences.
-2. Use `memory_read` with key `linkedin_search_results` to retrieve all extracted posts from the linkedin-search skill.
-3. If no posts are in memory, ask the user to run the `linkedin-search` skill first.
+   - Expected: Clear search criteria (role, seniority, location) and an array of post objects
+   - If search criteria are vague: infer reasonable defaults (e.g., no location = score all locations at 0.5)
 
-### Step 2: Score Each Post
+### Step 2: Score Each Post (0.0 to 1.0)
+Apply five weighted criteria to each post. See `references/scoring-rubric.md` for detailed signal tables.
 
-Evaluate every post against five weighted criteria. Each criterion produces a score from **0.0 to 1.0**, and the final relevance score is the weighted sum.
+| Criterion | Weight | Key signals |
+|-----------|--------|-------------|
+| Direct hiring post | 0.30 | "we're hiring", "join my team", job requirements listed |
+| Seniority match | 0.25 | Exact match=1.0, adjacent=0.7, not mentioned=0.5 |
+| Location match | 0.20 | Exact city=1.0, same state=0.8, remote=0.7 |
+| Company match | 0.15 | Named company=1.0, category match=0.7 |
+| Recency | 0.10 | Today=1.0, this week=0.6, older=0.1-0.3 |
 
-#### 2a. Direct Hiring Post (weight: 0.30)
+**Formula**: `score = (hiring * 0.30) + (seniority * 0.25) + (location * 0.20) + (company * 0.15) + (recency * 0.10)`
 
-Determine whether the post is an actual hiring announcement or just tangentially related content.
+   - Expected: Each post has a `relevanceScore` between 0.0 and 1.0, plus a `rankingReason` string explaining the score
+   - If a field is missing from a post (e.g., no location mentioned): score that criterion conservatively at 0.5
 
-| Signal | Score |
-|--------|-------|
-| Phrases like "we're hiring", "join my team", "open role", "looking for a", "come work with us" | 0.8 – 1.0 |
-| Job description details (requirements, qualifications, how to apply) | 0.9 – 1.0 |
-| Author is a recruiter or hiring manager (check headline) | 0.7 – 0.9 |
-| Generic career advice, motivational content, or industry commentary | 0.1 – 0.3 |
-| Reshare of someone else's post with no added hiring context | 0.0 – 0.2 |
+CRITICAL: Always provide a `rankingReason` string for each post explaining which criteria scored high or low. This is essential for the summary report.
 
-#### 2b. Seniority Match (weight: 0.25)
+### Step 3: Filter by Score
+Categorize posts into three buckets:
 
-Compare the role level mentioned in the post against the user's target seniority.
+1. **Below 0.3**: discard — not relevant enough to save
+2. **0.3 to 0.5**: save as `"low confidence"` — marginally relevant
+3. **Above 0.5**: save as `"relevant match"` — strong alignment with search criteria
 
-| Match Quality | Score |
-|---------------|-------|
-| Exact match (e.g., user wants "senior", post says "senior") | 1.0 |
-| Adjacent level (e.g., user wants "senior", post says "staff" or "mid-level") | 0.7 |
-| Seniority not mentioned in the post | 0.5 |
-| Wrong level entirely (e.g., user wants "senior", post says "intern" or "VP") | 0.2 |
+   - Expected: Posts split into discard, low confidence, and relevant match groups
+   - If all posts score below 0.3: report this — search queries may have been too broad
 
-#### 2c. Location Match (weight: 0.20)
+### Step 4: Save to JSONL
+For each qualifying post (score >= 0.3):
 
-Compare the post's location information against the user's preferred location.
+1. Ensure file exists: `mkdir -p ~/.x-lens && touch ~/.x-lens/linkedin-posts.jsonl`
+2. Generate ID: `echo -n "<url>" | shasum -a 256 | cut -c1-16`
+3. Check for duplicates: `grep -c '"id":"<hash>"' ~/.x-lens/linkedin-posts.jsonl`
+   - If count > 0: skip this post (already saved)
+4. Append JSONL record: `echo '<json_line>' >> ~/.x-lens/linkedin-posts.jsonl`
 
-| Match Quality | Score |
-|---------------|-------|
-| Exact city match | 1.0 |
-| Same state or metro area | 0.8 |
-| Remote or hybrid mentioned | 0.7 |
-| Country match only | 0.5 |
-| No location mentioned | 0.3 |
-| Explicitly a different city/country with no remote option | 0.1 |
+   - Expected: New posts appended to `~/.x-lens/linkedin-posts.jsonl`, duplicates skipped
 
-#### 2d. Company Match (weight: 0.15)
+**JSONL record fields**: id, url, author, authorTitle, company, text (first 500 chars), postedAt, capturedAt (ISO 8601), searchQuery, sourcePrompt, relevanceScore, rankingReason, seniority, location
 
-Check if the post's company aligns with the user's stated company preferences (specific companies, company types, industries, or size).
+### Step 5: Summary Report
+Present a report with:
 
-| Match Quality | Score |
-|---------------|-------|
-| Named company the user specifically requested | 1.0 |
-| Company matches a stated category (e.g., "startup", "FAANG", "fintech") | 0.7 |
-| Company identifiable but no match to user preferences | 0.4 |
-| No company information available | 0.2 |
+1. **Totals**: posts analyzed, discarded, saved (low confidence count + relevant match count)
+2. **Top 3 posts**: with scores, authors, companies, and ranking reasons
+3. **Issues**: any scoring anomalies, missing data, or suggestions for better queries
 
-#### 2e. Recency (weight: 0.10)
+   - Expected: Concise report the user can scan in under 30 seconds
+   - If 0 posts were saved: include a suggestion to refine search queries
 
-How recently the post was published.
+## Performance Notes
+- Score all posts before filtering — batch processing is faster than score-then-filter per post
+- The JSONL dedup check via `grep` is fast for files under 10,000 lines. For very large files, report the file size with `wc -l`
+- Recency scoring relies on LinkedIn's relative timestamps ("2d", "1w"). Parse these as approximate values, not exact dates
 
-| Recency | Score |
-|---------|-------|
-| Today | 1.0 |
-| Yesterday | 0.8 |
-| This week (2-7 days) | 0.6 |
-| Last week (8-14 days) | 0.3 |
-| Older than 2 weeks | 0.1 |
+## Examples
 
-#### Final Score Calculation
+### Example 1: High relevance post
+User says: "Find senior backend engineer roles at FAANG in Seattle"
 
+Post: "We're hiring a Senior Backend Engineer at Google! Seattle office, hybrid. Requirements: 5+ yrs distributed systems..."
+- Hiring signal: 1.0 (explicit "we're hiring" + requirements listed)
+- Seniority: 1.0 (exact "Senior" match)
+- Location: 1.0 (exact "Seattle" match)
+- Company: 1.0 (Google is FAANG)
+- Recency: 0.8 (posted yesterday)
+
+Score: `(1.0 * 0.30) + (1.0 * 0.25) + (1.0 * 0.20) + (1.0 * 0.15) + (0.8 * 0.10)` = **0.98**
+
+Result: Saved as relevant match
+
+### Example 2: Low relevance post (discarded)
+User says: "Find senior backend engineer roles at FAANG in Seattle"
+
+Post: "Excited to share my thoughts on the future of engineering careers! The industry is evolving fast..."
+- Hiring signal: 0.1 (no hiring language, generic career commentary)
+- Seniority: 0.5 (not mentioned)
+- Location: 0.3 (no location)
+- Company: 0.2 (no company)
+- Recency: 0.6 (this week)
+
+Score: `(0.1 * 0.30) + (0.5 * 0.25) + (0.3 * 0.20) + (0.2 * 0.15) + (0.6 * 0.10)` = **0.30**
+
+Result: Borderline — saved as low confidence
+
+### Example 3: Summary report output
 ```
-relevanceScore = (directHiring * 0.30) + (seniorityMatch * 0.25) + (locationMatch * 0.20) + (companyMatch * 0.15) + (recency * 0.10)
-```
+## LinkedIn Post Ranking Summary
 
-Round the final score to two decimal places.
+**Analyzed:** 47 posts | **Discarded:** 28 | **Saved:** 19 (7 low confidence, 12 relevant)
 
-### Step 3: Filter by Confidence Threshold
+### Top 3 Posts
+1. **Score 0.98** — Jane Smith (Google) — "We're hiring Senior Backend Engineer, Seattle"
+   Reason: Direct hiring, exact seniority/location/company match, posted yesterday
+2. **Score 0.85** — Bob Lee (Meta) — "Join my team! Backend engineers, Bellevue/remote"
+   Reason: Strong hiring signal, adjacent location, FAANG match
+3. **Score 0.72** — Recruiter at Amazon — "Open roles: SDE II/III, Seattle"
+   Reason: Hiring signal, location match, adjacent seniority (SDE III ≈ senior)
 
-After scoring all posts, classify each one:
-
-| Score Range | Action |
-|-------------|--------|
-| Below 0.3 | **Discard** — not relevant enough to save |
-| 0.3 – 0.5 | **Save as low confidence** — might be useful but unlikely |
-| Above 0.5 | **Save as relevant** — strong match worth reviewing |
-
-### Step 4: Prepare JSONL Records
-
-For each post that passes the filter (score >= 0.3), construct a JSON record. Each line in the JSONL file is a single JSON object:
-
-```json
-{"id":"sha256-of-url","url":"https://linkedin.com/feed/update/...","author":"Jane Smith","authorTitle":"Engineering Manager at Acme","company":"Acme Corp","text":"We're hiring a senior backend engineer...","postedAt":"2026-03-07","capturedAt":"2026-03-08T14:30:00Z","searchQuery":"senior backend engineer hiring","sourcePrompt":"find me senior backend roles in Seattle","relevanceScore":0.85,"rankingReason":"Direct hiring post from engineering manager, exact seniority match, Seattle location, known company","seniority":"senior","location":"Seattle"}
-```
-
-**Field definitions:**
-
-- `id`: SHA-256 hash of the post URL, truncated to 16 characters. Generate using `echo -n "<url>" | shasum -a 256 | cut -c1-16`.
-- `url`: The LinkedIn post URL.
-- `author`: Name of the post author.
-- `authorTitle`: The author's LinkedIn headline.
-- `company`: Company name extracted from the post or author headline. Use `"unknown"` if not identifiable.
-- `text`: First 500 characters of the post content.
-- `postedAt`: When the post was published (best estimate from the relative timestamp).
-- `capturedAt`: ISO 8601 timestamp of when the post was captured (now).
-- `searchQuery`: The LinkedIn search query that surfaced this post.
-- `sourcePrompt`: The user's original natural language prompt.
-- `relevanceScore`: The calculated weighted score (0.0 to 1.0).
-- `rankingReason`: A brief human-readable explanation of why this score was given.
-- `seniority`: The seniority level detected in the post (e.g., "junior", "mid", "senior", "staff", "lead", "manager", "unknown").
-- `location`: The location mentioned in the post, or `"unknown"`.
-
-### Step 5: Deduplicate Before Saving
-
-Before appending each record to the JSONL file, check if a record with the same ID already exists:
-
-```bash
-grep -c '"id":"<hash>"' ~/.x-lens/linkedin-posts.jsonl
+No issues detected.
 ```
 
-- If the count is **greater than 0**, skip that record (already saved).
-- If the file does not exist yet, create it with `touch ~/.x-lens/linkedin-posts.jsonl`.
+## Troubleshooting
 
-Use the shell tool to run dedup checks and append records:
+### All posts score below 0.3
+Cause: Search queries were too broad and returned mostly irrelevant content (career advice, motivational posts)
+Solution: Suggest more specific queries with explicit hiring language. Add "hiring" or "open role" to queries. Include target company names.
 
-```bash
-echo '<json-line>' >> ~/.x-lens/linkedin-posts.jsonl
-```
+### JSONL file doesn't exist
+Cause: First run, file hasn't been created yet
+Solution: Run `mkdir -p ~/.x-lens && touch ~/.x-lens/linkedin-posts.jsonl` before attempting to append.
 
-### Step 6: Summary Report
+### Duplicate post IDs in JSONL
+Cause: Same post saved from a previous run
+Solution: The `grep` dedup check in Step 4 prevents this. If duplicates exist from before the check was added, deduplicate manually: `sort -u -t'"' -k4,4 ~/.x-lens/linkedin-posts.jsonl > /tmp/deduped.jsonl && mv /tmp/deduped.jsonl ~/.x-lens/linkedin-posts.jsonl`
 
-After processing all posts, present a summary to the user:
-
-```
-### Post Ranking Summary
-
-**Source prompt**: "<user's original prompt>"
-**Total posts analyzed**: <N>
-**Discarded (score < 0.3)**: <X>
-**Saved as low confidence (0.3–0.5)**: <Y>
-**Saved as relevant (> 0.5)**: <Z>
-
-#### Top 3 Posts
-
-1. **[Author]** at **[Company]** — Score: [0.XX]
-   [First 150 chars of post text]...
-   Reason: [rankingReason]
-   Link: [url]
-
-2. ...
-
-3. ...
-
-#### Issues
-- [Any posts that couldn't be scored due to missing data]
-- [Any duplicates skipped]
-- [Any errors encountered]
-```
-
-### Important Notes
-
-- **Score transparency**: Always include the `rankingReason` field so the user understands why a post was ranked the way it was. This is critical for trust and for refining future searches.
-- **Conservative scoring**: When in doubt, score lower. It is better to surface fewer high-quality leads than to flood the user with noise.
-- **Missing data handling**: If a post is missing critical fields (e.g., no text content), assign it a score of 0.0 and discard it. Do not guess or fabricate information.
-- **File safety**: Always ensure `~/.x-lens/` directory exists before writing. Use `mkdir -p ~/.x-lens` if needed.
-- **Incremental operation**: This skill is designed to be run multiple times. Each run appends new posts and skips duplicates, building up the JSONL file over time.
+### Missing fields in extracted posts
+Cause: Post extraction returned incomplete data (e.g., no URL, no authorTitle)
+Solution: Score conservatively — set the missing criterion's contribution to 0.5. Generate ID from author + text hash if URL is missing.

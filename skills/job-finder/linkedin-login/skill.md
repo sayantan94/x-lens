@@ -1,138 +1,140 @@
 ---
 name: linkedin-login
-description: Handle LinkedIn authentication using stored credentials with 2FA support
-triggers: [linkedin login, authenticate, sign in, credentials, logged out]
+description: Handle LinkedIn authentication with stored credentials and 2FA support. Use when LinkedIn shows a login page, session expired, or user says "log into LinkedIn". Reads credentials from ~/.x-lens/.linkedin-creds, handles verification codes and CAPTCHAs with manual fallback.
+triggers: [linkedin login, sign in, authenticate, logged out, linkedin credentials, login failed]
 ---
+
+# LinkedIn Login
+
+**Most runs don't need login** — persistent browser profiles save cookies across sessions. Always check login state first.
 
 ## Instructions
 
-This skill handles LinkedIn authentication using stored credentials from `~/.x-lens/.linkedin-creds`. It supports 2FA prompts, CAPTCHA detection, and manual fallback.
-
 ### Step 1: Check Login State
+1. Navigate to `https://www.linkedin.com/feed/`
+2. Take a screenshot
 
-1. Use `browser_navigate` to go to `https://www.linkedin.com/feed/`
-2. Use `browser_screenshot` to capture the current page
-3. If the feed is visible (you see posts, a compose box, or navigation showing "Home", "My Network", etc.), you are already logged in. Save `LinkedIn login confirmed as of <today's date>` using `memory_write` with key `linkedin_login_status` and stop here.
-4. If you see a login page, signup prompt, or redirect to `/login`, proceed to Step 2.
+   - Expected: LinkedIn feed with posts visible, navigation bar showing "Home", "My Network", "Jobs"
+   - If feed is visible: you are already logged in. Save status to memory: "LinkedIn logged in <date>". Done — skip all remaining steps.
+   - If login/signup page is shown: continue to Step 2
 
 ### Step 2: Read Credentials
+1. Read the credentials file: `cat ~/.x-lens/.linkedin-creds`
+2. Parse the `email=` and `password=` lines
 
-1. Use the shell tool to run: `cat ~/.x-lens/.linkedin-creds`
-2. Parse the file for `email=` and `password=` lines (key=value format, one per line)
-3. If the file does not exist or is missing required fields, notify the user:
-   ```
-   [ACTION REQUIRED] LinkedIn credentials file not found or incomplete.
-   Please create ~/.x-lens/.linkedin-creds with the following format:
+   - Expected: Two lines with `email=user@example.com` and `password=secret`
+   - If file is missing or empty: tell the user to create it:
+     ```
+     Create ~/.x-lens/.linkedin-creds with:
+     email=your@email.com
+     password=yourpassword
+     ```
+     Then stop — cannot proceed without credentials.
 
-   email=your.email@example.com
-   password=your_password
+### Step 3: Enter Credentials and Submit
+1. Navigate to `https://www.linkedin.com/login`
+2. Type email into `input#username`
+3. Type password into `input#password`
+4. Click `button[type="submit"]`
+5. Wait 3 seconds, take a screenshot
 
-   Then re-run this skill.
-   ```
-   Stop here if credentials are unavailable.
+   - Expected: LinkedIn feed loads, or a verification challenge appears
+   - If feed loads: login succeeded — proceed to Step 5 (Verify)
+   - If challenge appears: proceed to Step 4
 
-### Step 3: Perform Login
+CRITICAL: Do not store or log credentials in plain text in any output. Only read them from the credentials file.
 
-1. Use `browser_navigate` to go to `https://www.linkedin.com/login`
-2. Use `browser_screenshot` to confirm the login form is visible
-3. Use `browser_click` on `input#username`, then `browser_type` to enter the email address
-4. Use `browser_click` on `input#password`, then `browser_type` to enter the password
-5. Use `browser_click` on `button[type="submit"]` to submit the form
-6. Wait 3 seconds for the page to load
-7. Use `browser_screenshot` to check the result
+### Step 4: Handle Verification Challenges
+Identify which challenge is shown and follow the corresponding action:
 
-### Step 4: Handle Post-Login Challenges
+**2FA verification code**:
+1. Alert: `[ALERT] LinkedIn 2FA — check your email or phone for a verification code`
+2. Wait 60 seconds, take a screenshot
+3. If code entry page still shown: wait another 60 seconds, screenshot again
+4. Retry up to 3 times (total 3 minutes)
 
-After submitting credentials, inspect the screenshot for the following scenarios:
+   - Expected: User enters code, page redirects to feed
+   - If 3 minutes pass with no code entered: use manual fallback
 
-#### 4a. Verification Code / 2FA Prompt
+**CAPTCHA challenge**:
+1. Alert: `[ALERT] LinkedIn CAPTCHA detected — manual login required`
+2. Use manual fallback immediately
 
-If the page asks for a verification code (SMS, email, or authenticator app):
+   - Expected: User completes CAPTCHA in visible browser
 
-1. Send an alert to the user:
-   ```
-   [ALERT] LinkedIn is requesting a verification code.
-   Please check your email/phone and enter the code in the browser within 60 seconds.
-   ```
-2. Wait 60 seconds, then use `browser_screenshot` to check if the user completed verification
-3. If still on the verification page, repeat the alert and wait — up to **3 attempts** (3 minutes total)
-4. If verification is still not completed after 3 attempts, notify the user:
-   ```
-   [FAILED] 2FA verification timed out after 3 minutes.
-   Please run: x-lens --persona job-finder --visible
-   and complete login manually in the visible browser window.
-   ```
-   Stop here.
+**"Unusual activity" warning**:
+1. Alert: `[ALERT] LinkedIn flagged unusual activity — manual login required`
+2. Use manual fallback immediately
 
-#### 4b. CAPTCHA Challenge
+**Wrong password error**:
+1. Alert: `[ALERT] LinkedIn login failed — password incorrect`
+2. Tell user to update `~/.x-lens/.linkedin-creds` with correct credentials
+3. Stop — cannot retry with wrong password
 
-If the page shows a CAPTCHA (image puzzle, "verify you're human", etc.):
+**Manual fallback**: Run `x-lens --persona job-finder --visible` — this opens a visible browser window where the user logs in manually. Cookies persist in the browser profile at `~/.x-lens/browser-data/job-finder/` for future automated runs.
 
-1. Notify the user:
-   ```
-   [ACTION REQUIRED] LinkedIn is showing a CAPTCHA challenge.
-   Please run: x-lens --persona job-finder --visible
-   and solve the CAPTCHA manually in the visible browser window.
-   ```
-2. Wait 60 seconds, then use `browser_screenshot` to check if the CAPTCHA was solved
-3. If CAPTCHA is still present, stop and instruct the user to complete it via `--visible` mode.
+### Step 5: Verify Login
+1. Navigate to `https://www.linkedin.com/feed/`
+2. Take a screenshot
 
-#### 4c. "Unusual Activity" or Account Restriction
+   - Expected: LinkedIn feed with posts visible, navigation bar present
+   - If feed is visible: login succeeded. Save to memory: "LinkedIn login successful <date>". Return to the calling skill.
+   - If not: use manual fallback from Step 4
 
-If the page mentions "unusual activity", "restricted", or similar security warnings:
+## Performance Notes
+- Check login state first — most runs are already logged in via persistent cookies
+- Browser profile at `~/.x-lens/browser-data/job-finder/` stores cookies across sessions
+- After one successful manual login with `--visible`, subsequent headless runs reuse saved cookies
+- LinkedIn sessions typically last 1-2 weeks before requiring re-authentication
 
-1. Notify the user:
-   ```
-   [ACTION REQUIRED] LinkedIn has flagged unusual activity on this account.
-   Automated login cannot proceed. Please run:
+## Examples
 
-   x-lens --persona job-finder --visible
+### Example 1: Already logged in
+User says: "Search LinkedIn for hiring posts" (linkedin-search calls this skill first)
 
-   and log in manually in the visible browser window. The persistent browser
-   profile will save your session for future automated runs.
-   ```
-2. Stop here.
+Actions:
+1. Navigate to `https://www.linkedin.com/feed/`
+2. Screenshot shows feed with posts and navigation bar
 
-#### 4d. Incorrect Credentials
+Result: Already logged in — done in one step, no credentials needed
 
-If the page shows "wrong password", "incorrect credentials", or similar error:
+### Example 2: Login with 2FA
+User says: "Log into LinkedIn"
 
-1. Notify the user:
-   ```
-   [ERROR] LinkedIn rejected the stored credentials.
-   Please update ~/.x-lens/.linkedin-creds with the correct email and password, then retry.
-   ```
-2. Stop here.
+Actions:
+1. Navigate to feed → screenshot shows login page
+2. Read credentials from `~/.x-lens/.linkedin-creds`
+3. Enter email and password, click submit
+4. Screenshot shows 2FA code entry page
+5. Alert user: "[ALERT] LinkedIn 2FA — check your email or phone"
+6. Wait 60 seconds → user enters code → feed loads
 
-### Step 5: Verify Successful Login
+Result: Login successful, cookies saved for future runs
 
-If none of the challenge scenarios above were detected:
+### Example 3: Session expired mid-search
+linkedin-search skill encounters login page during query execution
 
-1. Use `browser_navigate` to go to `https://www.linkedin.com/feed/`
-2. Use `browser_screenshot` to capture the page
-3. If the feed is visible (posts, compose box, navigation bar), login was successful:
-   - Save `LinkedIn login successful as of <today's date>` using `memory_write` with key `linkedin_login_status`
-   - Report success to the caller
-4. If the feed is not visible, treat it as a failed login and proceed to Step 6.
+Actions:
+1. Navigate to feed → login page shown (session expired)
+2. Read credentials, enter them, submit
+3. Feed loads without challenge (cookies partially valid)
 
-### Step 6: Manual Fallback
+Result: Re-authenticated, linkedin-search resumes remaining queries
 
-If automated login has failed for any reason not covered above:
+## Troubleshooting
 
-1. Notify the user:
-   ```
-   [FAILED] Automated LinkedIn login was unsuccessful.
-   Please log in manually by running:
+### Credentials file not found
+Cause: User hasn't created the credentials file yet
+Solution: Tell user to create `~/.x-lens/.linkedin-creds` with `email=` and `password=` lines. File must exist before login can proceed.
 
-   x-lens --persona job-finder --visible
+### Login works but next run asks for login again
+Cause: Browser profile directory doesn't exist or cookies aren't being persisted
+Solution: Verify `~/.x-lens/browser-data/job-finder/` directory exists. If missing, the browser is using a temporary profile. Check that the daemon launches with the correct `profileDir` setting.
 
-   Log in through the visible browser window. Your session will be saved in the
-   persistent browser profile, so future automated runs will not need to log in again.
-   ```
+### "Unusual activity" detected on every login attempt
+Cause: LinkedIn is flagging headless browser automation
+Solution: Log in once manually using `x-lens --persona job-finder --visible`. Complete any verification challenges in the visible browser. Cookies from this session persist for future headless runs.
 
-### Important Notes
-
-- **Persistent sessions**: x-lens uses Playwright with persistent browser profiles. Once logged in, cookies survive restarts, so this skill should rarely need to perform a full login.
-- **Credential security**: The credentials file at `~/.x-lens/.linkedin-creds` is read only when needed. Never log or echo credential values in output.
-- **Rate limiting**: Do not retry the login flow in rapid succession. If login fails, wait for user intervention rather than hammering the login endpoint.
-- **Visible mode**: The `--visible` flag launches the browser in headed mode so the user can interact with it directly. This is the recommended fallback for any authentication challenge that cannot be automated.
+### 2FA code times out
+Cause: User didn't enter the verification code within 3 minutes
+Solution: Increase wait time or use `--visible` mode for initial login so the user can enter the code directly in the browser window.
