@@ -74,7 +74,7 @@ export async function runOnce(prompt: string, options: RunOptions = {}): Promise
 	const projectRoot = new URL("../..", import.meta.url).pathname;
 	const skills = loadSkills(projectRoot, options.persona);
 	const jobStore = new JobStore();
-	const tools = createTools(browser, skills, jobStore);
+	const tools = createTools(browser, skills, jobStore, options.persona);
 	const status = new StatusServer();
 
 	const model = resolveModel(options);

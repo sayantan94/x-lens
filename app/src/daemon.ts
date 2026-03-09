@@ -247,7 +247,7 @@ function getOrCreatePersonaAgent(
   const profileDir = join(homedir(), ".x-lens", "browser-data", persona);
   const browser = new BrowserController({ headless: true, profileDir });
   const skills = loadSkills(projectRoot, persona);
-  const tools = createTools(browser, skills, jobStore);
+  const tools = createTools(browser, skills, jobStore, persona);
   const model = resolveModel(provider, modelId);
   const memory = readMemory();
 
