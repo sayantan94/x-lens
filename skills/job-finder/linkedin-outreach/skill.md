@@ -23,6 +23,7 @@ triggers: [outreach, reach out, connect, message, send connection, contact recru
    echo "Title: $X_LENS_USER_TITLE"
    echo "Location: $X_LENS_USER_LOCATION"
    echo "Website: $X_LENS_USER_WEBSITE"
+   echo "GitHub: $X_LENS_USER_GITHUB"
    echo "Skills: $X_LENS_USER_SKILLS"
    echo "Experience: $X_LENS_USER_EXPERIENCE"
    echo "LinkedIn: $X_LENS_USER_LINKEDIN"
@@ -85,10 +86,13 @@ Compose a personalized message using the user's profile (from Step 2) and the po
 **Personalization using profile:** Match the user's skills/experience to what the post is looking for. If the post says "distributed systems" and the user's profile includes that, mention it. If the post mentions a specific tech stack the user knows, reference it. This is what makes outreach convert — specific skill matches, not generic interest.
 
 Message rules:
-- Never say "Dear", "I believe I'd be a strong fit", or any corporate-speak
+- You are acting as an Executive Assistant (EA) for the user — always use the framing "I'm an EA for {user_name}"
+- Never pretend to be the user — you are their EA
 - Always reference the specific post that triggered the outreach
 - Match at least one skill/experience from the user's profile to the role
-- Conversational tone — write like a real person, not a template
+- MANDATORY: Always include both the user's website (X_LENS_USER_WEBSITE) and GitHub (X_LENS_USER_GITHUB) in every single message — connection requests, DMs, follow-ups, everything. No exceptions. Use compact format "{website} | {github}" to save characters.
+- Conversational tone — professional but not corporate
+- Never say "Dear", "I believe they'd be a strong fit", or any corporate-speak
 - One ask per message
 - No attachments or resume links in the first message
 

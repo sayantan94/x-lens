@@ -2,47 +2,54 @@
 
 Reference templates for LinkedIn outreach messages. Adapt these to each specific situation — never copy-paste verbatim.
 
+The agent acts as an Executive Assistant (EA) for the user. All messages should use the "I'm an EA for..." framing — clear, professional, and transparent.
+
 ## Connection Request Notes (Max 300 Characters)
 
-LinkedIn enforces a hard 300-character limit on connection request notes. Every template below is under that limit.
+LinkedIn enforces a hard 300-character limit on connection request notes. Every template below is under that limit. Always include the user's website and GitHub.
 
 ### Hiring manager posted a specific role
 
-> Hi {name}, saw your post about the {role} opening on your team at {company} — sounds like a great fit for my background in {skill}. Would love to connect and learn more!
+> Hi {name}, I'm an EA for {user_name}, a Senior SWE with {N}+ yrs in {skill}. Saw your post about the {role} opening at {company} — think there could be a great fit. {website} | {github}
 
-> Hey {name}, your post about hiring for {role} at {company} caught my eye. I've been doing similar work in {skill area} and would love to chat. Mind if we connect?
+> Hi {name}, I'm an EA for {user_name}. Noticed your {role} post at {company} — their background in {skill} aligns well. Would love to connect you. {website} | {github}
 
 ### Recruiter "we're hiring" post
 
-> Hi {name}, noticed your post about open roles at {company}. I'm actively looking for {role type} positions and your team sounds like a great match. Would love to connect!
+> Hi {name}, I'm an EA for {user_name}, a Senior SWE focused on {skill area}. Saw your post about hiring at {company} — would love to connect. {website} | {github}
 
-> Hey {name}, saw you're hiring at {company} — I've been focused on {skill area} for the past few years and the work your team does looks really interesting. Let's connect!
+> Hi {name}, I'm an EA for {user_name}. Noticed {company} is hiring {role}s — they have deep experience in {skill area}. {website} | {github}
 
 ### Generic hiring signal (team growth, headcount mention)
 
-> Hi {name}, saw your post about growing the team at {company}. I'm a {role} with experience in {skill area} and would love to learn more about what you're building.
+> Hi {name}, I'm an EA for {user_name}, a Senior SWE with experience in {skill area}. Noticed your team at {company} is growing — would love to connect. {website} | {github}
 
-> Hey {name}, your post about {company}'s growth caught my attention. I work in {skill area} and the problems your team tackles sound fascinating. Would be great to connect!
+### Cold outreach (no post, targeting specific company)
+
+> Hi {name}, I'm an EA for {user_name}, a Senior SWE with {N}+ yrs in {skill}. Noticed your work on {specific area} at {company} — think there could be a great fit. {website} | {github}
 
 ## Direct Message Templates (Max 500 Characters)
 
-For existing connections. More room for context but keep it concise.
+For existing connections. More room for context.
 
 ### Specific role posted
 
-> Hey {name}, saw your post about the {role} opening at {company} — the work on {specific project/tech from post} sounds really compelling. I've been working on {relevant experience} for the past {N} years and this feels like a natural fit. Would love to hear more about the team and what you're looking for. Happy to share more about my background if helpful!
+> Hey {name}, I'm an EA for {user_name}. Saw your post about the {role} opening at {company} — the work on {specific detail from post} sounds compelling. {user_name} has been building {relevant experience} and this looks like a natural fit. Would you be open to a quick intro? More about their work at {website} and {github}.
 
 ### Team growth / general hiring
 
-> Hey {name}, noticed your post about expanding the {team} at {company}. The {specific detail from post} really stood out to me — I've been doing similar work in {skill area} and have been thinking about my next move. Would love to learn more about what the team is working on and what kind of profiles you're looking for. Open to a quick chat whenever works for you.
+> Hey {name}, I'm an EA for {user_name}. Noticed your post about expanding the {team} at {company}. {user_name} has been doing {relevant work} in {skill area} and the {specific detail from post} really stood out. Would love to set up a quick intro if you're open to it. {website} | {github}
 
 ## Rules
 
-1. **Never** open with "Dear" — use "Hi" or "Hey"
-2. **Never** say "I believe I'd be a strong fit" or "I'm confident my skills align" — show, don't tell
-3. **Always** reference the specific post that triggered the outreach — mention what they wrote about
-4. **Conversational tone** — write like you're messaging a colleague, not drafting a cover letter
-5. **One ask per message** — either "let's connect" or "happy to chat" or "would love to learn more", not all three
-6. **No attachments or resume links** in the first message — if they're interested, they'll ask
-7. **Keep it specific** — generic messages get ignored. Mention the exact role, team, project, or technology from their post
-8. **Don't oversell** — a brief mention of relevant experience is enough. Save the pitch for the conversation.
+1. **Always use "I'm an EA for {user_name}"** — this is the standard framing, use it in every message
+2. **Never** pretend to be the user — you are their EA
+3. **Never** open with "Dear" — use "Hi" or "Hey"
+4. **Never** say "I believe they'd be a strong fit" — let the skills speak
+5. **Always include website and GitHub** — these let the recipient see real work
+6. **Always** reference the specific post, role, or work that triggered the outreach
+7. **Conversational tone** — professional but not corporate
+8. **One ask per message** — "connect" or "intro", not both
+9. **No attachments or resume links** — website and GitHub are enough
+10. **Keep it specific** — mention the exact role, team, or technology
+11. **Don't oversell** — brief mention of relevant experience is enough

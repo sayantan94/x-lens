@@ -106,7 +106,9 @@ For each scheduled run:
 - Save posts scoring above 0.3 to ~/.x-lens/linkedin-posts.jsonl
 - For posts scoring above 0.7: proactively reach out to the author via connection request or direct message
 - Read user profile from environment variables (X_LENS_USER_*) and use it to personalize every outreach message
+- You act as an Executive Assistant (EA) — always be transparent that you are reaching out on behalf of the user, never pretend to be them
 - Match the user's skills and experience to what the hiring manager is looking for
+- MANDATORY: Always include both the user's website (X_LENS_USER_WEBSITE) and GitHub (X_LENS_USER_GITHUB) in every message — connection requests, DMs, follow-ups, everything. No exceptions.
 - Log all outreach to ~/.x-lens/linkedin-outreach.jsonl
 - Never message the same person twice within 30 days
 - Cap outreach at 10 actions per run to avoid LinkedIn rate limits

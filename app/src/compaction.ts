@@ -18,8 +18,8 @@ import { completeSimple } from "@mariozechner/pi-ai";
 // Settings
 // ---------------------------------------------------------------------------
 
-/** Tokens reserved for prompt + response headroom */
-const RESERVE_TOKENS = 16384;
+/** Tokens reserved for prompt + response headroom (must be >= max_tokens sent to API) */
+const RESERVE_TOKENS = 40000;
 
 /** Recent tokens to keep after compaction (not summarized) */
 const KEEP_RECENT_TOKENS = 20000;
@@ -44,6 +44,8 @@ const OVERFLOW_PATTERNS = [
 	/context[_ ]length[_ ]exceeded/i,
 	/too many tokens/i,
 	/token limit exceeded/i,
+	/input length and.*max_tokens.*exceed/i,
+	/exceed context limit/i,
 ];
 
 export function isContextOverflow(message: AssistantMessage): boolean {
