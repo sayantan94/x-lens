@@ -21,6 +21,12 @@ function resolveModel(options: RunOptions) {
 	if (provider === "anthropic") {
 		return getModel("anthropic", (modelId || "claude-sonnet-4-20250514") as any);
 	}
+	if (provider === "openrouter") {
+		return getModel("openrouter", (modelId || "qwen/qwen3-235b-a22b") as any);
+	}
+	if (provider === "groq") {
+		return getModel("groq", (modelId || "qwen/qwen3-32b") as any);
+	}
 	return getModel("amazon-bedrock", (modelId || "anthropic.claude-sonnet-4-20250514-v1:0") as any);
 }
 

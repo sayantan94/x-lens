@@ -97,31 +97,45 @@ For each scheduled run:
   },
 
   "job-finder": {
-    intro: `You are a proactive LinkedIn job search specialist. Your job is to decompose natural-language job search prompts into LinkedIn searches, extract relevant posts/listings, rank them by relevance, and save results to ~/.x-lens/linkedin-posts.jsonl.`,
+    intro: `You are a fully autonomous LinkedIn job search and outreach agent acting as an executive assistant. Your job is to find Senior Software Engineer roles on LinkedIn, rank them by relevance, and proactively reach out to hiring managers and recruiters with personalized messages — all without human approval. You operate hands-off: find opportunities, craft outreach, send messages, and close conversations.`,
     mission: `## Your Mission
-- Decompose NLP prompts into targeted LinkedIn search queries
+- Decompose job search prompts into targeted LinkedIn search queries
 - Execute LinkedIn searches and scroll through results
 - Extract job posts, listings, and relevant professional content
 - Rank extracted posts by relevance to the user's criteria
 - Save posts scoring above 0.3 to ~/.x-lens/linkedin-posts.jsonl
-- Report a summary of findings after each run`,
+- For posts scoring above 0.7: proactively reach out to the author via connection request or direct message
+- Read user profile from environment variables (X_LENS_USER_*) and use it to personalize every outreach message
+- Match the user's skills and experience to what the hiring manager is looking for
+- Log all outreach to ~/.x-lens/linkedin-outreach.jsonl
+- Never message the same person twice within 30 days
+- Cap outreach at 10 actions per run to avoid LinkedIn rate limits
+- Report a summary of findings and outreach after each run`,
     howToThink: `## How to Think
 For each scheduled run:
-1. Read the prompt and understand what roles/companies/criteria the user is targeting
+1. Read the prompt and understand what roles/companies/criteria to target
 2. Generate multiple LinkedIn search queries to maximize coverage
 3. Search and scroll through LinkedIn results, extracting posts and listings
-4. Rank each extracted post by relevance (0.0–1.0) to the user's criteria
+4. Rank each extracted post by relevance (0.0–1.0)
 5. Save all posts scoring above 0.3 to ~/.x-lens/linkedin-posts.jsonl
-6. Report a summary: total found, top matches, new companies, and trends`,
+6. For outreach runs: read high-scoring posts, load user profile from env vars, draft casual personalized messages that highlight matching skills, and send connection requests or DMs
+7. Always check ~/.x-lens/linkedin-outreach.jsonl before contacting anyone — skip if contacted in last 30 days
+8. Use casual, conversational tone in all messages — no corporate-speak
+9. Keep connection request notes under 300 characters (LinkedIn limit)
+10. If LinkedIn shows any rate limit warning, STOP immediately and report it
+11. You are fully autonomous — do not ask for approval, just execute`,
     alertCriteria: `## Alert Criteria — Only notify when:
 - 1+ posts scoring above 0.7 relevance found
-- A new company starts posting for the user's target role
-- A high-priority role matches multiple search criteria`,
+- A new company starts posting for the target role
+- Outreach was sent — include count and names
+- LinkedIn rate limit or security warning encountered
+- Responses received to previous outreach`,
     doNotAlert: `## DO NOT alert for:
 - 0 new posts found in a scan
 - Low-relevance posts scoring below 0.5
 - Duplicate posts already saved in previous runs
-- Generic company updates unrelated to job search`,
+- Generic company updates unrelated to job search
+- Routine feed scans with nothing new`,
   },
 };
 
@@ -224,6 +238,12 @@ const personaAgents = new Map<string, PersonaAgent>();
 function resolveModel(provider: string, modelId?: string): Model<Api> {
   if (provider === "anthropic") {
     return getModel("anthropic", (modelId || "claude-sonnet-4-20250514") as any);
+  }
+  if (provider === "openrouter") {
+    return getModel("openrouter", (modelId || "qwen/qwen3-235b-a22b") as any);
+  }
+  if (provider === "groq") {
+    return getModel("groq", (modelId || "qwen/qwen3-32b") as any);
   }
   return getModel("amazon-bedrock", (modelId || "anthropic.claude-sonnet-4-20250514-v1:0") as any);
 }
@@ -589,7 +609,55 @@ export async function startDaemon(options: {
     }
   }
 
-  if (existingForPersona.length === 0 && persona !== "trader") {
+  if (existingForPersona.length === 0 && persona === "job-finder") {
+    log(`No jobs found for persona "${persona}" — seeding default LinkedIn outreach schedule`);
+
+    const jobFinderJobs: CreateJobInput[] = [
+      {
+        id: "linkedin-job-search",
+        persona: "job-finder",
+        prompt: "Search LinkedIn for Senior Software Engineer roles. Use the linkedin-search skill to generate diverse queries covering: 'senior software engineer hiring', 'senior SWE open role', 'hiring backend engineer senior', and company-specific queries for top tech companies. Extract and rank all posts using post-extraction and post-ranking skills. Save posts scoring above 0.3 to ~/.x-lens/linkedin-posts.jsonl.",
+        type: "cron",
+        schedule: "0 14 * * 1-5", // 9 AM ET = 2 PM UTC
+        notify: true,
+      },
+      {
+        id: "linkedin-feed-scan",
+        persona: "job-finder",
+        prompt: "Scan your LinkedIn feed for recent hiring posts. Scroll through the feed and look for posts containing: 'we\\'re hiring', 'join my team', 'open role', 'looking for engineers', 'growing the team'. Extract and rank any relevant posts using post-extraction and post-ranking skills. Focus on Senior Software Engineer or equivalent roles.",
+        type: "cron",
+        schedule: "0 16 * * 1-5", // 11 AM ET = 4 PM UTC
+        notify: true,
+      },
+      {
+        id: "linkedin-outreach",
+        persona: "job-finder",
+        prompt: "Process high-scoring posts and send outreach. Use the linkedin-outreach skill to: read posts scoring >= 0.7 from ~/.x-lens/linkedin-posts.jsonl, check ~/.x-lens/linkedin-outreach.jsonl to skip anyone contacted in the last 30 days, visit each author's profile, draft a casual personalized connection request or message, and send it. Max 10 outreach actions per run. Log all outreach to ~/.x-lens/linkedin-outreach.jsonl.",
+        type: "cron",
+        schedule: "0 18 * * 1-5", // 1 PM ET = 6 PM UTC
+        notify: true,
+      },
+      {
+        id: "outreach-summary",
+        persona: "job-finder",
+        prompt: "Weekly outreach summary. Read ~/.x-lens/linkedin-outreach.jsonl and ~/.x-lens/linkedin-posts.jsonl. Report: total outreach sent this week, breakdown by connection request vs direct message, top companies contacted, total high-scoring posts in pipeline, and any LinkedIn rate limit issues encountered. Check LinkedIn notifications for any responses to previous outreach and report those too.",
+        type: "cron",
+        schedule: "0 22 * * 5", // 5 PM ET Friday = 10 PM UTC
+        notify: true,
+      },
+    ];
+
+    for (const job of jobFinderJobs) {
+      try {
+        jobStore.create(job);
+        log(`  Created default job: ${job.id}`);
+      } catch (err) {
+        logError(`  Failed to create default job ${job.id}: ${err}`);
+      }
+    }
+  }
+
+  if (existingForPersona.length === 0 && persona !== "trader" && persona !== "job-finder") {
     log(`No jobs found for persona "${persona}". Create jobs via REPL: x-lens --persona ${persona} "your prompt here"`);
   }
 
