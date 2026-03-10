@@ -1,12 +1,26 @@
-import * as readline from "node:readline";
 import { Agent, type AgentEvent } from "@mariozechner/pi-agent-core";
 import { getModel, type AssistantMessage, type Message } from "@mariozechner/pi-ai";
+import {
+	TUI,
+	ProcessTerminal,
+	Editor,
+	Markdown,
+	Text,
+	TruncatedText,
+	Loader,
+	Image,
+	Spacer,
+	CombinedAutocompleteProvider,
+	matchesKey,
+	Key,
+	type Component,
+} from "@mariozechner/pi-tui";
 import chalk from "chalk";
 import { BrowserController } from "./browser.js";
 import { createTools } from "./tools.js";
 import { loadSkills, formatSkillsForPrompt } from "./skills.js";
 import { StatusServer } from "./status-server.js";
-import { renderMarkdown, renderError, renderToolStart, renderToolEnd, renderHeader, renderResponseStart, renderResponseEnd, formatToolLabel, extractResultPreview } from "./render.js";
+import { formatToolLabel, extractResultPreview } from "./render.js";
 import {
 	readMemory,
 	loadSessionMessages,
@@ -16,6 +30,14 @@ import {
 } from "./memory.js";
 import { shouldCompact, isContextOverflow, compact } from "./compaction.js";
 import { JobStore } from "./job-store.js";
+import {
+	markdownTheme,
+	userMarkdownTheme,
+	editorTheme,
+	imageTheme,
+	headerStyle,
+	toolStyle,
+} from "./themes.js";
 
 export interface ReplOptions {
 	visible?: boolean;
@@ -90,6 +112,26 @@ Save things like: user preferences, frequently used URLs, login info hints, recu
 ${skillsSection}`;
 }
 
+// ---------------------------------------------------------------------------
+// Helper: build the header text string
+// ---------------------------------------------------------------------------
+function buildHeaderText(
+	persona: string | undefined,
+	provider: string,
+	modelId: string,
+	inputTokens: number,
+	contextWindow: number,
+): string {
+	const parts: string[] = [headerStyle.brand("x-lens")];
+	if (persona) parts.push(headerStyle.info(persona));
+	parts.push(headerStyle.info(`${provider}/${modelId}`));
+	if (inputTokens > 0) {
+		const pct = ((inputTokens / contextWindow) * 100).toFixed(0);
+		parts.push(headerStyle.tokens(`${(inputTokens / 1000).toFixed(0)}K/${(contextWindow / 1000).toFixed(0)}K (${pct}%)`));
+	}
+	return parts.join(headerStyle.separator(" | "));
+}
+
 export async function runInteractive(options: ReplOptions = {}): Promise<void> {
 	const browser = new BrowserController({ headless: !options.visible });
 	const projectRoot = new URL("../..", import.meta.url).pathname;
@@ -118,14 +160,55 @@ export async function runInteractive(options: ReplOptions = {}): Promise<void> {
 		followUpMode: "one-at-a-time",
 	});
 
-	// Restore previous session — load full AgentMessages into the agent
-	// This is the same pattern mom uses: sessionManager.buildSessionContext() + agent.replaceMessages()
+	// Restore previous session
 	const previousMessages = loadSessionMessages();
 	if (previousMessages.length > 0) {
 		agent.replaceMessages(previousMessages);
 	}
 
-	// Track agent state
+	// -----------------------------------------------------------------------
+	// TUI setup
+	// -----------------------------------------------------------------------
+	const terminal = new ProcessTerminal();
+	const tui = new TUI(terminal);
+
+	// Header
+	const providerName = options.provider || "bedrock";
+	const modelName = options.model || process.env.X_LENS_MODEL || (providerName === "anthropic" ? "claude-sonnet-4-20250514" : "anthropic.claude-sonnet-4-20250514-v1:0");
+	let header = new TruncatedText(
+		buildHeaderText(options.persona, providerName, modelName, 0, model.contextWindow),
+		1,
+		0,
+	);
+	tui.addChild(header);
+	tui.addChild(new Spacer(1));
+
+	// Session resume notice
+	if (previousMessages.length > 0) {
+		tui.addChild(
+			new Text(chalk.dim(`Resuming session (${previousMessages.length} messages). Use --new to start fresh.`), 1, 0),
+		);
+		tui.addChild(new Spacer(1));
+	}
+
+	// Editor with autocomplete
+	const editor = new Editor(tui, editorTheme);
+	const autocompleteProvider = new CombinedAutocompleteProvider(
+		[
+			{ name: "exit", description: "Quit x-lens" },
+			{ name: "new", description: "Start a new session" },
+			{ name: "clear", description: "Clear the display" },
+			{ name: "jobs", description: "Show background jobs" },
+		],
+		process.cwd(),
+	);
+	editor.setAutocompleteProvider(autocompleteProvider);
+	tui.addChild(editor);
+	tui.setFocus(editor);
+
+	// -----------------------------------------------------------------------
+	// Agent state tracking
+	// -----------------------------------------------------------------------
 	let agentBusy = false;
 	let responseText = "";
 	let isStreaming = false;
@@ -143,18 +226,66 @@ export async function runInteractive(options: ReplOptions = {}): Promise<void> {
 		"browser_type", "browser_scroll",
 	]);
 
-	// Track tool start times for duration calculation (like mom)
 	const toolStartTimes = new Map<string, { startTime: number; args: Record<string, unknown> }>();
 
+	// Currently active Markdown component for streaming response
+	let activeResponseMd: Markdown | null = null;
+	// Currently active Loader component
+	let activeLoader: Loader | null = null;
+
+	// Helper: insert a component just before the editor (last child)
+	function insertBeforeEditor(component: Component) {
+		const children = tui.children;
+		children.splice(children.length - 1, 0, component);
+		tui.requestRender();
+	}
+
+	// Helper: remove the active loader
+	function removeLoader() {
+		if (activeLoader) {
+			activeLoader.stop();
+			tui.removeChild(activeLoader);
+			activeLoader = null;
+		}
+	}
+
+	// Helper: show a loader
+	function showLoader(message: string) {
+		removeLoader();
+		activeLoader = new Loader(
+			tui,
+			(s) => chalk.cyan(s),
+			(s) => chalk.dim(s),
+			message,
+		);
+		insertBeforeEditor(activeLoader);
+	}
+
+	// Helper: update the header with current token counts
+	function updateHeader() {
+		const newHeader = new TruncatedText(
+			buildHeaderText(options.persona, providerName, modelName, lastInputTokens, model.contextWindow),
+			1,
+			0,
+		);
+		const idx = tui.children.indexOf(header);
+		if (idx !== -1) {
+			tui.children[idx] = newHeader;
+		}
+		header = newHeader;
+		tui.requestRender();
+	}
+
 	// Compaction helper
-	const logCompaction = (msg: string) => {
-		console.log(chalk.magenta(`  ⟳ ${msg}`));
-	};
+	function showCompactionMessage(msg: string) {
+		const comp = new Text(chalk.magenta(`  \u27F3 ${msg}`), 0, 0);
+		insertBeforeEditor(comp);
+	}
 
 	async function checkAndCompact(): Promise<void> {
 		if (!shouldCompact(lastInputTokens + lastCacheReadTokens, model.contextWindow)) return;
 
-		logCompaction(`Context at ${lastInputTokens} tokens (limit: ${model.contextWindow}). Compacting...`);
+		showCompactionMessage(`Context at ${lastInputTokens} tokens (limit: ${model.contextWindow}). Compacting...`);
 		status.addUpdate({
 			type: "tool_start",
 			timestamp: Date.now(),
@@ -165,73 +296,109 @@ export async function runInteractive(options: ReplOptions = {}): Promise<void> {
 		});
 
 		try {
-			const result = await compact(agent, model, logCompaction);
+			const result = await compact(agent, model, (msg: string) => showCompactionMessage(msg));
 			if (result) {
-				// Persist the compacted session
 				saveSessionMessages(agent.state.messages as Message[]);
-				logCompaction(`Done. ${result.messagesRemoved} messages summarized, ${result.messagesKept} kept.`);
+				showCompactionMessage(`Done. ${result.messagesRemoved} messages summarized, ${result.messagesKept} kept.`);
 			}
 		} catch (err) {
 			const msg = err instanceof Error ? err.message : String(err);
-			console.error(chalk.red(`  Compaction failed: ${msg}`));
+			const errComp = new Text(chalk.red(`  Compaction failed: ${msg}`), 0, 0);
+			insertBeforeEditor(errComp);
 		}
 	}
 
-	// Subscribe to events ONCE (mom pattern — subscribe once, mutable run state)
+	// -----------------------------------------------------------------------
+	// Subscribe to agent events
+	// -----------------------------------------------------------------------
 	agent.subscribe((event: AgentEvent) => {
-		// Collect streaming text — show dots as indicator
+		// Streaming text delta -> create/update Markdown
 		if (event.type === "message_update" && event.assistantMessageEvent.type === "text_delta") {
 			const delta = event.assistantMessageEvent.delta;
-			if (!isStreaming) {
-				process.stdout.write(chalk.dim("  ● Responding... (Ctrl+C to stop)"));
-				isStreaming = true;
-			}
 			responseText += delta;
+
+			if (!isStreaming) {
+				isStreaming = true;
+				// Remove the loader while streaming text
+				removeLoader();
+				// Create a new Markdown component for the response
+				activeResponseMd = new Markdown(responseText, 1, 1, markdownTheme);
+				insertBeforeEditor(activeResponseMd);
+			} else if (activeResponseMd) {
+				activeResponseMd.setText(responseText);
+				tui.requestRender();
+			}
 		}
 
-		// Tool execution start — show label + args
+		// Tool execution start
 		if (event.type === "tool_execution_start") {
 			const args = (event.args ?? {}) as Record<string, unknown>;
 			toolStartTimes.set(event.toolCallId, { startTime: Date.now(), args });
-			console.log(renderToolStart(event.toolName, args));
+
+			// If we were streaming text, finalize the markdown
+			if (isStreaming) {
+				isStreaming = false;
+				activeResponseMd = null;
+			}
+
+			const label = formatToolLabel(event.toolName, args);
+			const toolComp = new Text(toolStyle.icon.start("\u21B3") + " " + toolStyle.label(label), 1, 0);
+			insertBeforeEditor(toolComp);
+
+			showLoader(`Running ${event.toolName}...`);
+
 			status.addUpdate({
 				type: "tool_start",
 				timestamp: Date.now(),
 				content: "",
 				toolName: event.toolName,
-				toolLabel: formatToolLabel(event.toolName, args),
+				toolLabel: label,
 				source: "repl",
 			});
 		}
 
-		// Tool execution end — show result preview + duration
+		// Tool execution end
 		if (event.type === "tool_execution_end") {
 			const started = toolStartTimes.get(event.toolCallId);
 			const durationMs = started ? Date.now() - started.startTime : 0;
 			const args = started?.args ?? {};
 			toolStartTimes.delete(event.toolCallId);
 
-			const isErr = !!(event as any).isError;
-			console.log(renderToolEnd(event.toolName, args, durationMs, event.result, isErr));
+			removeLoader();
 
+			const isErr = !!(event as any).isError;
+			const label = formatToolLabel(event.toolName, args);
+			const duration = (durationMs / 1000).toFixed(1);
+			const icon = isErr ? toolStyle.icon.error("\u2717") : toolStyle.icon.success("\u2713");
 			const resultPreview = extractResultPreview(event.result, isErr);
+
+			let resultLine = `${icon} ${toolStyle.label(label)} ${toolStyle.duration(`(${duration}s)`)}`;
+			if (resultPreview) {
+				resultLine += "\n" + toolStyle.result(`    ${resultPreview}`);
+			}
+			const resultComp = new Text(resultLine, 1, 0);
+			insertBeforeEditor(resultComp);
+
 			status.addUpdate({
 				type: "tool_end",
 				timestamp: Date.now(),
 				content: resultPreview,
 				toolName: event.toolName,
-				toolLabel: formatToolLabel(event.toolName, args),
+				toolLabel: label,
 				duration: durationMs,
 				isError: isErr,
 				source: "repl",
 			});
 
-			// Browser screenshots for status page
+			// Browser screenshots — display inline + send to status
 			if (browserToolNames.has(event.toolName)) {
 				const content = (event.result as any)?.content;
 				if (Array.isArray(content)) {
 					const img = content.find((c: any) => c.type === "image");
 					if (img) {
+						const imageComp = new Image(img.data, img.mimeType || "image/png", imageTheme);
+						insertBeforeEditor(imageComp);
+
 						status.addUpdate({
 							type: "screenshot",
 							timestamp: Date.now(),
@@ -244,43 +411,37 @@ export async function runInteractive(options: ReplOptions = {}): Promise<void> {
 			}
 		}
 
-		// Track token usage + check for overflow on each assistant message
+		// Track token usage
 		if (event.type === "message_end") {
 			appendSessionMessage(event.message as Message);
 
-			// Track usage from assistant messages
 			const msg = event.message as any;
 			if (msg.role === "assistant" && msg.usage) {
 				lastInputTokens = msg.usage.input || 0;
 				lastOutputTokens = msg.usage.output || 0;
 				lastCacheReadTokens = msg.usage.cacheRead || 0;
 				lastCacheWriteTokens = msg.usage.cacheWrite || 0;
+				updateHeader();
 
-				// Check for overflow error — flag for compaction + retry after agent_end
 				if (isContextOverflow(msg as AssistantMessage)) {
-					logCompaction("Context overflow detected! Will compact after current run ends...");
+					showCompactionMessage("Context overflow detected! Will compact after current run ends...");
 					needsRetryAfterCompaction = true;
 				}
 			}
 		}
 
-		// Tool call after streaming — need separator
-		if (event.type === "tool_execution_start" && isStreaming) {
-			// Agent is doing more tool calls after some text — end the stream visually
-			process.stdout.write("\n\n");
-			isStreaming = false;
-		}
-
 		// Agent finished a complete run
 		if (event.type === "agent_end") {
-			// Emergency compaction + retry: agent has stopped, safe to compact and continue
+			removeLoader();
+
+			// Emergency compaction + retry
 			if (needsRetryAfterCompaction) {
 				needsRetryAfterCompaction = false;
 				responseText = "";
 				isStreaming = false;
 				hasError = false;
+				activeResponseMd = null;
 
-				// Remove the overflow error message from agent state
 				const messages = [...agent.state.messages] as Message[];
 				if (messages.length > 0) {
 					const last = messages[messages.length - 1] as any;
@@ -290,33 +451,38 @@ export async function runInteractive(options: ReplOptions = {}): Promise<void> {
 					}
 				}
 
-				// Defer to next tick — agent_end fires from inside the agent loop,
-				// the agent needs to fully unwind before we call continue()
 				setTimeout(() => {
-					compact(agent, model, logCompaction).then((result) => {
+					compact(agent, model, (msg: string) => showCompactionMessage(msg)).then((result) => {
 						if (result) {
 							saveSessionMessages(agent.state.messages as Message[]);
-							logCompaction("Retrying after compaction...");
-							// Another tick to ensure compaction state is settled
+							showCompactionMessage("Retrying after compaction...");
 							setTimeout(() => agent.continue(), 0);
 						} else {
-							console.error(renderError("Compaction produced no result. Cannot retry."));
+							const errComp = new Text(chalk.red("  Compaction produced no result. Cannot retry."), 0, 0);
+							insertBeforeEditor(errComp);
 							agentBusy = false;
+							editor.disableSubmit = false;
+							tui.requestRender();
 						}
 					}).catch((err) => {
-						console.error(renderError(`Emergency compaction failed: ${err instanceof Error ? err.message : String(err)}`));
+						const msg = err instanceof Error ? err.message : String(err);
+						const errComp = new Text(chalk.red(`  Emergency compaction failed: ${msg}`), 0, 0);
+						insertBeforeEditor(errComp);
 						agentBusy = false;
+						editor.disableSubmit = false;
+						tui.requestRender();
 					});
 				}, 0);
 				return;
 			}
 
-			// Check for errors (skip error display if user aborted)
+			// Check for errors
 			if (!aborted && event.messages?.length) {
 				for (const msg of event.messages) {
 					const errorMsg = (msg as any).errorMessage;
 					if (errorMsg) {
-						console.error(renderError(errorMsg));
+						const errComp = new Text(chalk.red(`  \u2717 ${errorMsg}`), 0, 0);
+						insertBeforeEditor(errComp);
 						hasError = true;
 						status.addUpdate({
 							type: "error",
@@ -327,20 +493,20 @@ export async function runInteractive(options: ReplOptions = {}): Promise<void> {
 				}
 			}
 
-			// Clear streaming indicator
-			if (isStreaming) {
-				process.stdout.write("\r" + " ".repeat(60) + "\r");
+			// Show abort warning
+			if (aborted && responseText) {
+				const warnComp = new Text(chalk.yellow("  \u26A0 Response interrupted"), 0, 0);
+				insertBeforeEditor(warnComp);
 			}
 
-			// Show response (even partial on abort)
-			if (responseText && !hasError) {
-				console.log(renderResponseStart());
-				console.log(renderMarkdown(responseText));
-				if (aborted) {
-					console.log(chalk.yellow("  ⚠ Response interrupted"));
-				}
-				const elapsed = turnStartTime > 0 ? Date.now() - turnStartTime : 0;
-				console.log(renderResponseEnd(elapsed, lastInputTokens));
+			// Show turn stats
+			const elapsed = turnStartTime > 0 ? Date.now() - turnStartTime : 0;
+			const statParts: string[] = [];
+			if (elapsed > 0) statParts.push(`${(elapsed / 1000).toFixed(1)}s`);
+			if (lastInputTokens > 0) statParts.push(`${(lastInputTokens / 1000).toFixed(0)}K tokens`);
+			if (statParts.length > 0) {
+				const statsComp = new Text(chalk.dim(`  ${statParts.join(" \u00B7 ")}`), 0, 0);
+				insertBeforeEditor(statsComp);
 			}
 
 			// Check for [ALERT] markers
@@ -370,121 +536,164 @@ export async function runInteractive(options: ReplOptions = {}): Promise<void> {
 				source: "repl",
 			});
 
+			// Reset state
 			responseText = "";
 			isStreaming = false;
 			hasError = false;
 			aborted = false;
+			activeResponseMd = null;
 
-			// Check if we should proactively compact before next turn
+			// Spacer between turns
+			insertBeforeEditor(new Spacer(1));
+
+			// Proactive compaction check, then re-enable editor
 			checkAndCompact().finally(() => {
 				agentBusy = false;
+				editor.disableSubmit = false;
+				tui.requestRender();
 			});
 		}
 	});
 
-	await status.start();
+	// -----------------------------------------------------------------------
+	// Editor submit handler
+	// -----------------------------------------------------------------------
+	editor.onSubmit = async (value: string) => {
+		const trimmed = value.trim();
+		if (!trimmed) return;
 
-	const rl = readline.createInterface({
-		input: process.stdin,
-		output: process.stdout,
-	});
-
-	console.log(renderHeader());
-
-	if (previousMessages.length > 0) {
-		console.log(chalk.dim(`  Resuming session (${previousMessages.length} messages). Use --new to start fresh.\n`));
-	}
-
-	// Ctrl+C: abort current run if busy, double-tap to exit
-	let pendingExit = false;
-	process.on("SIGINT", () => {
-		if (agentBusy) {
-			console.log(chalk.yellow("\n  Interrupting..."));
-			aborted = true;
-			agent.abort();
-			return;
-		}
-		if (pendingExit) {
+		// Slash commands
+		if (trimmed === "/exit") {
+			tui.stop();
+			try {
+				await status.stop();
+				await browser.close();
+			} catch {
+				// ignore
+			}
 			process.exit(0);
 		}
-		pendingExit = true;
-		console.log(chalk.dim("\n  Press Ctrl+C again or type 'exit' to quit.\n"));
-		setTimeout(() => { pendingExit = false; }, 2000);
-	});
 
-	function promptUser(): void {
-		rl.question(chalk.cyan("> "), async (input) => {
-			const trimmed = input.trim();
+		if (trimmed === "/new") {
+			clearSession();
+			agent.replaceMessages([]);
+			// Remove all children except header, spacer after header, and editor
+			const children = tui.children;
+			// Keep first 2 (header + spacer) and last 1 (editor)
+			children.splice(2, children.length - 3);
+			const notice = new Text(chalk.dim("Session cleared."), 1, 0);
+			children.splice(children.length - 1, 0, notice);
+			children.splice(children.length - 1, 0, new Spacer(1));
+			tui.requestRender();
+			return;
+		}
 
-			if (!trimmed) {
-				promptUser();
-				return;
+		if (trimmed === "/clear") {
+			const children = tui.children;
+			// Keep first 2 (header + spacer) and last 1 (editor)
+			children.splice(2, children.length - 3);
+			tui.requestRender();
+			return;
+		}
+
+		if (trimmed === "/jobs") {
+			const persona = options.persona;
+			const allJobs = jobStore.list();
+			const jobs = persona ? allJobs.filter((j) => j.persona === persona) : allJobs;
+			if (jobs.length === 0) {
+				const noJobs = new Text(chalk.dim(persona ? `No jobs for persona '${persona}'.` : "No jobs found."), 1, 0);
+				insertBeforeEditor(noJobs);
+			} else {
+				const jobLines = jobs.map((j) => `  ${j.enabled ? chalk.green("\u2713") : chalk.dim("\u25CB")} ${j.id}: ${j.prompt.slice(0, 60)}`.trim());
+				const jobsComp = new Text(chalk.bold("Jobs:\n") + jobLines.join("\n"), 1, 0);
+				insertBeforeEditor(jobsComp);
 			}
+			return;
+		}
 
-			if (trimmed === "exit" || trimmed === "quit") {
-				console.log(chalk.dim("\n  Goodbye.\n"));
-				rl.close();
-				try {
-					await status.stop();
-					await browser.close();
-				} catch {
-					// ignore
-				}
-				process.exit(0);
-			}
+		// Show user message with userMarkdownTheme + bgColor
+		const userMd = new Markdown(trimmed, 1, 1, userMarkdownTheme, {
+			bgColor: (text: string) => chalk.bgGray(text),
+		});
+		insertBeforeEditor(userMd);
 
-			// Build proper UserMessage (same structure mom uses)
+		if (agentBusy) {
+			// Steer agent with new instruction
+			const steerNotice = new Text(chalk.yellow("  Steering agent with new instruction..."), 0, 0);
+			insertBeforeEditor(steerNotice);
 			const userMessage: Message = {
 				role: "user",
 				content: [{ type: "text", text: trimmed }],
 				timestamp: Date.now(),
 			};
+			agent.steer(userMessage);
+			return;
+		}
 
+		// Start new agent turn
+		agentBusy = true;
+		editor.disableSubmit = true;
+		turnStartTime = Date.now();
+
+		status.addUpdate({
+			type: "turn_start",
+			timestamp: Date.now(),
+			content: trimmed.length > 100 ? trimmed.slice(0, 100) + "..." : trimmed,
+			source: "repl",
+		});
+
+		showLoader("Thinking...");
+
+		const userMessage: Message = {
+			role: "user",
+			content: [{ type: "text", text: trimmed }],
+			timestamp: Date.now(),
+		};
+
+		try {
+			await agent.prompt(userMessage);
+			await agent.waitForIdle();
+		} catch (err: unknown) {
+			const message = err instanceof Error ? err.message : String(err);
+			removeLoader();
+			const errComp = new Text(chalk.red(`  \u2717 ${message}`), 0, 0);
+			insertBeforeEditor(errComp);
+			status.addUpdate({
+				type: "error",
+				timestamp: Date.now(),
+				content: message,
+			});
+			agentBusy = false;
+			editor.disableSubmit = false;
+			tui.requestRender();
+		}
+	};
+
+	// -----------------------------------------------------------------------
+	// Ctrl+C handling via TUI input
+	// -----------------------------------------------------------------------
+	const originalHandleInput = editor.handleInput.bind(editor);
+	editor.handleInput = (data: string) => {
+		if (matchesKey(data, Key.ctrl("c"))) {
 			if (agentBusy) {
-				// Agent is mid-task — steer it with new instruction
-				// This is exactly how mom handles new Slack messages while agent is working
-				console.log(chalk.yellow("  Steering agent with new instruction..."));
-				agent.steer(userMessage);
-				promptUser();
+				aborted = true;
+				agent.abort();
+				const interruptComp = new Text(chalk.yellow("  Interrupting..."), 0, 0);
+				insertBeforeEditor(interruptComp);
 				return;
 			}
-
-			agentBusy = true;
-			turnStartTime = Date.now();
-			status.addUpdate({
-				type: "turn_start",
-				timestamp: Date.now(),
-				content: trimmed.length > 100 ? trimmed.slice(0, 100) + "..." : trimmed,
-				source: "repl",
-			});
-
-			try {
-				await agent.prompt(userMessage);
-				await agent.waitForIdle();
-			} catch (err: unknown) {
-				const message = err instanceof Error ? err.message : String(err);
-				console.error(renderError(message));
-				status.addUpdate({
-					type: "error",
-					timestamp: Date.now(),
-					content: message,
-				});
-				agentBusy = false;
-			}
-
-			promptUser();
-		});
-	}
-
-	rl.on("close", async () => {
-		try {
-			await status.stop();
-			await browser.close();
-		} catch {
-			// ignore
+			// Not busy — exit
+			tui.stop();
+			status.stop().catch(() => {});
+			browser.close().catch(() => {});
+			process.exit(0);
 		}
-		process.exit(0);
-	});
+		originalHandleInput(data);
+	};
 
-	promptUser();
+	// -----------------------------------------------------------------------
+	// Start
+	// -----------------------------------------------------------------------
+	await status.start();
+	tui.start();
 }
