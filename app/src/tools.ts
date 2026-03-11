@@ -28,7 +28,8 @@ async function browserResult(
   browser: BrowserController,
 ): Promise<(TextContent | ImageContent)[]> {
   const snap = await browser.snapshot();
-  const tree = truncateText(snap.accessibilityTree, 30_000);
+  const snapshotText = truncateText(snap.snapshot, 30_000);
+  const label = snap.snapshotMode === "ai" ? "Page Snapshot" : "Accessibility Tree";
   return [
     {
       type: "image" as const,
@@ -37,7 +38,7 @@ async function browserResult(
     },
     {
       type: "text" as const,
-      text: `URL: ${snap.url}\nTitle: ${snap.title}\n\nAccessibility Tree:\n${tree}`,
+      text: `URL: ${snap.url}\nTitle: ${snap.title}\n\n${label}:\n${snapshotText}`,
     },
   ];
 }
@@ -355,7 +356,7 @@ function createSkillReadTool(skills: Skill[]): AgentTool {
 // Schedule tools
 // ---------------------------------------------------------------------------
 
-function createScheduleCreateTool(store: JobStore): AgentTool {
+function createScheduleCreateTool(store: JobStore, persona?: string): AgentTool {
   return {
     name: "schedule_create",
     label: "Create Schedule",
@@ -363,7 +364,7 @@ function createScheduleCreateTool(store: JobStore): AgentTool {
       "Create a scheduled job that runs automatically. Types: 'cron' (cron expression), 'interval' (every N minutes), 'continuous' (loop with pause). The job runs in the daemon using the specified persona's agent session.",
     parameters: Type.Object({
       id: Type.String({ description: "Unique job ID (e.g., 'oi-morning-scan')" }),
-      persona: Type.String({ description: "Persona to use (e.g., 'trader', 'predictor')" }),
+      persona: Type.Optional(Type.String({ description: "Persona to use (defaults to current persona)" })),
       prompt: Type.String({ description: "What to do each run (natural language instruction)" }),
       type: Type.Union([Type.Literal("cron"), Type.Literal("interval"), Type.Literal("continuous")], {
         description: "Job type: cron, interval, or continuous",
@@ -375,7 +376,8 @@ function createScheduleCreateTool(store: JobStore): AgentTool {
     }),
     execute: async (_toolCallId, params: any) => {
       try {
-        const job = store.create(params as CreateJobInput);
+        const input = { ...params, persona: params.persona || persona || "trader" } as CreateJobInput;
+        const job = store.create(input);
         return textResult(`Schedule "${job.id}" created (type: ${job.type}, persona: ${job.persona}). It will start running when the daemon is active.`);
       } catch (err: any) {
         return textResult(`Failed to create schedule: ${err.message}`);
@@ -426,9 +428,9 @@ function createScheduleListTool(store: JobStore): AgentTool {
   };
 }
 
-export function createScheduleTools(store: JobStore): AgentTool[] {
+export function createScheduleTools(store: JobStore, persona?: string): AgentTool[] {
   return [
-    createScheduleCreateTool(store),
+    createScheduleCreateTool(store, persona),
     createScheduleDeleteTool(store),
     createScheduleListTool(store),
   ];
@@ -438,7 +440,7 @@ export function createScheduleTools(store: JobStore): AgentTool[] {
 // Public API
 // ---------------------------------------------------------------------------
 
-export function createTools(browser: BrowserController, skills: Skill[], jobStore?: JobStore): AgentTool[] {
+export function createTools(browser: BrowserController, skills: Skill[], jobStore?: JobStore, persona?: string): AgentTool[] {
   const tools = [
     createNavigateTool(browser),
     createScreenshotTool(browser),
@@ -455,7 +457,7 @@ export function createTools(browser: BrowserController, skills: Skill[], jobStor
     createSkillReadTool(skills),
   ];
   if (jobStore) {
-    tools.push(...createScheduleTools(jobStore));
+    tools.push(...createScheduleTools(jobStore, persona));
   }
   return tools;
 }

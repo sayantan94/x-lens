@@ -2,6 +2,7 @@ import { existsSync, readFileSync, writeFileSync, mkdirSync, appendFileSync } fr
 import { join } from "node:path";
 import { homedir } from "node:os";
 import type { Message } from "@mariozechner/pi-ai";
+import { repairMessages } from "./session-manager.js";
 
 const X_LENS_DIR = join(homedir(), ".x-lens");
 const MEMORY_FILE = join(X_LENS_DIR, "MEMORY.md");
@@ -46,7 +47,12 @@ export function loadSessionMessages(): Message[] {
 	if (!existsSync(CONTEXT_FILE)) return [];
 	try {
 		const lines = readFileSync(CONTEXT_FILE, "utf-8").trim().split("\n").filter(Boolean);
-		return lines.map((line) => JSON.parse(line) as Message);
+		const messages = lines.map((line) => JSON.parse(line) as Message);
+		const repaired = repairMessages(messages);
+		if (repaired.length !== messages.length) {
+			saveSessionMessages(repaired);
+		}
+		return repaired;
 	} catch {
 		return [];
 	}

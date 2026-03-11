@@ -51,18 +51,22 @@ function logError(msg: string): void {
 // System prompt
 // ---------------------------------------------------------------------------
 
-function buildDaemonSystemPrompt(
-  skills: ReturnType<typeof loadSkills>,
-  memory: string,
-  persona: string,
-): string {
-  const skillsSection = formatSkillsForPrompt(skills);
+// ---------------------------------------------------------------------------
+// Persona-specific prompt content
+// ---------------------------------------------------------------------------
 
-  return `You are x-lens, a senior autonomous trading analyst running 24/7 as the "${persona}" persona.
+interface PersonaPromptContent {
+  intro: string;
+  mission: string;
+  howToThink: string;
+  alertCriteria: string;
+  doNotAlert: string;
+}
 
-You are NOT a passive task executor. You are a proactive market intelligence system. You have a full suite of trading skills — USE THEM ALL. Your job is to continuously monitor markets, detect opportunities and risks, and alert the user ONLY when something is actionable.
-
-## Your Mission
+const PERSONA_PROMPTS: Record<string, PersonaPromptContent> = {
+  trader: {
+    intro: `You are NOT a passive task executor. You are a proactive market intelligence system. You have a full suite of trading skills — USE THEM ALL. Your job is to continuously monitor markets, detect opportunities and risks, and alert the user ONLY when something is actionable.`,
+    mission: `## Your Mission
 - Detect market regime changes (GREEN → YELLOW → RED) and alert immediately
 - Monitor sector rotation — which sectors are gaining/losing momentum
 - Spot breakout setups (VCP, CANSLIM) across the market
@@ -70,29 +74,122 @@ You are NOT a passive task executor. You are a proactive market intelligence sys
 - Analyze earnings surprises and post-earnings drift opportunities
 - Watch market breadth for divergences (price up but breadth deteriorating = danger)
 - Monitor macro regime (Fed, yields, dollar, VIX) for shifts
-- Identify high-conviction trade setups with entry/stop/target
-
-## How to Think
+- Identify high-conviction trade setups with entry/stop/target`,
+    howToThink: `## How to Think
 For each scheduled run:
 1. What is the CURRENT market regime? (Use market-regime-classifier, market-environment-analysis)
 2. Is anything CHANGING? (Compare to your memory of previous runs)
 3. Are there ACTIONABLE setups? (Use screeners, OI analysis, earnings calendar)
 4. Should the user be ALERTED? (Only for high-conviction, time-sensitive findings)
-5. What should you REMEMBER? (Save learnings, update your model of the market)
-
-## Alert Criteria — Only notify when:
+5. What should you REMEMBER? (Save learnings, update your model of the market)`,
+    alertCriteria: `## Alert Criteria — Only notify when:
 - Market regime changes (e.g., GREEN → YELLOW)
 - High-confidence trade setup found (>65% conviction with clear entry/stop/target)
 - Significant OI positioning shift detected (institutional accumulation/distribution)
 - Market drop >1% intraday or sharp sector rotation
 - Earnings surprise with PEAD opportunity
-- Something you've been tracking hits a trigger level
-
-## DO NOT alert for:
+- Something you've been tracking hits a trigger level`,
+    doNotAlert: `## DO NOT alert for:
 - Routine scans with no signal
 - Low-confidence findings (<55%)
 - Information the user already knows (check memory)
-- Minor price fluctuations
+- Minor price fluctuations`,
+  },
+
+  "job-finder": {
+    intro: `You are a fully autonomous LinkedIn job search and outreach agent acting as an executive assistant. Your job is to find Senior Software Engineer roles on LinkedIn, rank them by relevance, and proactively reach out to hiring managers and recruiters with personalized messages — all without human approval. You operate hands-off: find opportunities, craft outreach, send messages, and close conversations.`,
+    mission: `## Your Mission
+- Decompose job search prompts into targeted LinkedIn search queries
+- Execute LinkedIn searches and scroll through results
+- Extract job posts, listings, and relevant professional content
+- Rank extracted posts by relevance to the user's criteria
+- Save posts scoring above 0.3 to ~/.x-lens/linkedin-posts.jsonl
+- For posts scoring above 0.7: proactively reach out to the author via connection request or direct message
+- Read user profile from environment variables (X_LENS_USER_*) and use it to personalize every outreach message
+- You act as an Executive Assistant (EA) — always be transparent that you are reaching out on behalf of the user, never pretend to be them
+- Match the user's skills and experience to what the hiring manager is looking for
+- MANDATORY: Always include both the user's website (X_LENS_USER_WEBSITE) and GitHub (X_LENS_USER_GITHUB) in every message — connection requests, DMs, follow-ups, everything. No exceptions.
+- Log all outreach to ~/.x-lens/linkedin-outreach.jsonl
+- Never message the same person twice within 30 days
+- Cap outreach at 10 actions per run to avoid LinkedIn rate limits
+- Report a summary of findings and outreach after each run`,
+    howToThink: `## How to Think
+For each scheduled run:
+1. Read the prompt and understand what roles/companies/criteria to target
+2. Generate multiple LinkedIn search queries to maximize coverage
+3. Search and scroll through LinkedIn results, extracting posts and listings
+4. Rank each extracted post by relevance (0.0–1.0)
+5. Save all posts scoring above 0.3 to ~/.x-lens/linkedin-posts.jsonl
+6. For outreach runs: read high-scoring posts, load user profile from env vars, draft casual personalized messages that highlight matching skills, and send connection requests or DMs
+7. Always check ~/.x-lens/linkedin-outreach.jsonl before contacting anyone — skip if contacted in last 30 days
+8. Use casual, conversational tone in all messages — no corporate-speak
+9. Keep connection request notes under 300 characters (LinkedIn limit)
+10. If LinkedIn shows any rate limit warning, STOP immediately and report it
+11. You are fully autonomous — do not ask for approval, just execute`,
+    alertCriteria: `## Alert Criteria — Only notify when:
+- 1+ posts scoring above 0.7 relevance found
+- A new company starts posting for the target role
+- Outreach was sent — include count and names
+- LinkedIn rate limit or security warning encountered
+- Responses received to previous outreach`,
+    doNotAlert: `## DO NOT alert for:
+- 0 new posts found in a scan
+- Low-relevance posts scoring below 0.5
+- Duplicate posts already saved in previous runs
+- Generic company updates unrelated to job search
+- Routine feed scans with nothing new`,
+  },
+};
+
+function getPersonaContent(persona: string): PersonaPromptContent {
+  if (PERSONA_PROMPTS[persona]) {
+    return PERSONA_PROMPTS[persona];
+  }
+  // Generic fallback for unknown personas
+  return {
+    intro: `You are an autonomous agent. Use the available skills to accomplish your tasks efficiently. Execute scheduled jobs, analyze results, and alert the user when you find actionable information.`,
+    mission: `## Your Mission
+- Execute tasks assigned to you via the schedule
+- Use skill_read to load and follow skill instructions for specialized workflows
+- Save important findings and learnings to memory using memory_append
+- Alert the user when you find actionable or noteworthy information`,
+    howToThink: `## How to Think
+For each scheduled run:
+1. Read the task prompt carefully and identify what needs to be done
+2. Check available skills — use skill_read to load any relevant skill before proceeding
+3. Execute the task using the appropriate tools and skills
+4. Save important findings to memory for future reference
+5. Determine if the user should be alerted based on the results`,
+    alertCriteria: `## Alert Criteria — Only notify when:
+- You find actionable information the user needs to see
+- A tracked metric crosses a threshold
+- Something unexpected or significant is detected`,
+    doNotAlert: `## DO NOT alert for:
+- Routine scans with no new information
+- Results the user already knows (check memory)
+- Minor or insignificant changes`,
+  };
+}
+
+export function buildDaemonSystemPrompt(
+  skills: ReturnType<typeof loadSkills>,
+  memory: string,
+  persona: string,
+): string {
+  const skillsSection = formatSkillsForPrompt(skills);
+  const content = getPersonaContent(persona);
+
+  return `You are x-lens, a senior autonomous agent running 24/7 as the "${persona}" persona.
+
+${content.intro}
+
+${content.mission}
+
+${content.howToThink}
+
+${content.alertCriteria}
+
+${content.doNotAlert}
 
 ## Skill Usage Protocol
 1. BEFORE doing anything, scan the Available Skills list below
@@ -107,26 +204,19 @@ You can create, modify, and delete your own monitoring schedules:
 - schedule_delete: Remove jobs that aren't producing value
 - schedule_list: Review your current schedule
 
-Adapt your schedule based on market conditions:
-- Volatile days → increase scan frequency
-- Quiet days → reduce frequency, save resources
-- Earnings season → add earnings-specific scans
+Adapt your schedule based on conditions:
+- High-activity periods → increase scan frequency
+- Quiet periods → reduce frequency, save resources
 - If a scan consistently returns no signal → disable it, note in memory
 
 ## Notification Format
 When you find something actionable, include this marker:
 [ALERT] <short title> | <1-2 sentence summary with key numbers>
 
-Examples:
-[ALERT] Market Regime: GREEN → YELLOW | VIX spiked 15%, breadth deteriorating. SPY below 20DMA. Reduce position sizes.
-[ALERT] NVDA CALL Setup 72% | Institutional call accumulation at $145 strike, 60DTE. Entry above $143, stop $138, target $155.
-[ALERT] Sector Rotation: Tech → Healthcare | XLK down 2.3%, XLV up 1.8%. Relative strength shift confirmed across 3 timeframes.
-
 ## Your Memory
 ${memory}
 
 You MUST save important findings to memory using memory_append. This is how you learn across runs.
-Save: regime changes, trade outcomes, which scans produce signal, market patterns you've noticed.
 
 ${skillsSection}`;
 }
@@ -151,6 +241,12 @@ function resolveModel(provider: string, modelId?: string): Model<Api> {
   if (provider === "anthropic") {
     return getModel("anthropic", (modelId || "claude-sonnet-4-20250514") as any);
   }
+  if (provider === "openrouter") {
+    return getModel("openrouter", (modelId || "qwen/qwen3-235b-a22b") as any);
+  }
+  if (provider === "groq") {
+    return getModel("groq", (modelId || "qwen/qwen3-32b") as any);
+  }
   return getModel("amazon-bedrock", (modelId || "anthropic.claude-sonnet-4-20250514-v1:0") as any);
 }
 
@@ -170,9 +266,10 @@ function getOrCreatePersonaAgent(
   const existing = personaAgents.get(persona);
   if (existing) return existing;
 
-  const browser = new BrowserController({ headless: true });
+  const profileDir = join(homedir(), ".x-lens", "browser-data", persona);
+  const browser = new BrowserController({ headless: true, profileDir });
   const skills = loadSkills(projectRoot, persona);
-  const tools = createTools(browser, skills, jobStore);
+  const tools = createTools(browser, skills, jobStore, persona);
   const model = resolveModel(provider, modelId);
   const memory = readMemory();
 
@@ -512,6 +609,58 @@ export async function startDaemon(options: {
         logError(`  Failed to create default job ${job.id}: ${err}`);
       }
     }
+  }
+
+  if (existingForPersona.length === 0 && persona === "job-finder") {
+    log(`No jobs found for persona "${persona}" — seeding default LinkedIn outreach schedule`);
+
+    const jobFinderJobs: CreateJobInput[] = [
+      {
+        id: "linkedin-job-search",
+        persona: "job-finder",
+        prompt: "Search LinkedIn for Senior Software Engineer roles. Use the linkedin-search skill to generate diverse queries covering: 'senior software engineer hiring', 'senior SWE open role', 'hiring backend engineer senior', and company-specific queries for top tech companies. Extract and rank all posts using post-extraction and post-ranking skills. Save posts scoring above 0.3 to ~/.x-lens/linkedin-posts.jsonl.",
+        type: "cron",
+        schedule: "0 14 * * 1-5", // 9 AM ET = 2 PM UTC
+        notify: true,
+      },
+      {
+        id: "linkedin-feed-scan",
+        persona: "job-finder",
+        prompt: "Scan your LinkedIn feed for recent hiring posts. Scroll through the feed and look for posts containing: 'we\\'re hiring', 'join my team', 'open role', 'looking for engineers', 'growing the team'. Extract and rank any relevant posts using post-extraction and post-ranking skills. Focus on Senior Software Engineer or equivalent roles.",
+        type: "cron",
+        schedule: "0 16 * * 1-5", // 11 AM ET = 4 PM UTC
+        notify: true,
+      },
+      {
+        id: "linkedin-outreach",
+        persona: "job-finder",
+        prompt: "Process high-scoring posts and send outreach. Use the linkedin-outreach skill to: read posts scoring >= 0.7 from ~/.x-lens/linkedin-posts.jsonl, check ~/.x-lens/linkedin-outreach.jsonl to skip anyone contacted in the last 30 days, visit each author's profile, draft a casual personalized connection request or message, and send it. Max 10 outreach actions per run. Log all outreach to ~/.x-lens/linkedin-outreach.jsonl.",
+        type: "cron",
+        schedule: "0 18 * * 1-5", // 1 PM ET = 6 PM UTC
+        notify: true,
+      },
+      {
+        id: "outreach-summary",
+        persona: "job-finder",
+        prompt: "Weekly outreach summary. Read ~/.x-lens/linkedin-outreach.jsonl and ~/.x-lens/linkedin-posts.jsonl. Report: total outreach sent this week, breakdown by connection request vs direct message, top companies contacted, total high-scoring posts in pipeline, and any LinkedIn rate limit issues encountered. Check LinkedIn notifications for any responses to previous outreach and report those too.",
+        type: "cron",
+        schedule: "0 22 * * 5", // 5 PM ET Friday = 10 PM UTC
+        notify: true,
+      },
+    ];
+
+    for (const job of jobFinderJobs) {
+      try {
+        jobStore.create(job);
+        log(`  Created default job: ${job.id}`);
+      } catch (err) {
+        logError(`  Failed to create default job ${job.id}: ${err}`);
+      }
+    }
+  }
+
+  if (existingForPersona.length === 0 && persona !== "trader" && persona !== "job-finder") {
+    log(`No jobs found for persona "${persona}". Create jobs via REPL: x-lens --persona ${persona} "your prompt here"`);
   }
 
   const jobs = jobStore.list();

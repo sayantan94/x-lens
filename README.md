@@ -4,9 +4,27 @@
 
 # x-lens
 
-A skills-based personal agent with browser capabilities. Built on a stripped-down fork of [pi-toolkit](https://github.com/nichochar/pi-toolkit).
+A persona-based autonomous AI agent with browser capabilities. Adding a new domain is `mkdir` and a markdown file.
 
-x-lens can browse the web autonomously (navigate, click, type, screenshot), run shell commands, make HTTP requests, and follow user-defined skills — all driven by an LLM.
+### What it does
+
+- **Browses the web autonomously** — navigate, click, type, screenshot, evaluate JavaScript
+- **Follows skills written in markdown** — the LLM reads instructions and executes them using tools
+- **Isolates domains via personas** — each persona gets its own browser profile, session history, system prompt, skills, and scheduled jobs
+- **Runs as a daemon** — 24/7 background agent with self-managed scheduling and macOS notifications
+- **Serves a UI** — status page at `localhost:3456`, jobs browser at `localhost:3456/jobs`
+
+### What it supports
+
+| | |
+|---|---|
+| **LLM Providers** | Anthropic (direct API), AWS Bedrock (20+ model providers) |
+| **Personas** | `trader` (~40 skills), `job-finder` (4 skills), `predictor` (1 skill), or create your own |
+| **Tools** | Browser (6), Shell, HTTP, Memory (3), Scheduling (3) — 15 total |
+| **Modes** | Command (single task), REPL (interactive), Daemon (24/7 autonomous) |
+| **Skills format** | Markdown with YAML frontmatter, optional `references/` directory for progressive disclosure |
+| **Browser** | Persistent Chromium via Playwright, per-persona profiles, headless or visible |
+| **Platform** | macOS (native notifications via osascript), Linux (daemon mode) |
 
 ## Personas & Skills
 
@@ -24,8 +42,13 @@ skills/
 │   ├── vcp-screener/
 │   ├── technical-analyst/
 │   └── ...
-└── predictor/           # --persona predictor (1 skill)
-    └── prediction-markets/  
+├── predictor/           # --persona predictor (1 skill)
+│   └── prediction-markets/
+└── job-finder/          # --persona job-finder (4 skills)
+    ├── linkedin-search/
+    ├── post-extraction/
+    ├── post-ranking/
+    └── linkedin-login/
 ```
 
 - **Global skills** (`skills/global/`) — loaded for every persona
@@ -46,8 +69,9 @@ When you run `x-lens --persona trader`, the agent:
 
 | Persona | Flag | Skills | Focus |
 |---------|------|--------|-------|
-| **trader** | `--persona trader` | ~40 | Market analysis, screening, earnings, strategy, portfolio, options, OI analysis |
+| **trader** | `--persona trader` | ~40 | Market analysis, screening, earnings, strategy, portfolio, options, OI analysis. Trading skills and market data pipelines are powered by [Fintools-AI](https://github.com/fintools-ai). |
 | **predictor** | `--persona predictor` | 1 | Prediction market trading on Polymarket & Kalshi |
+| **job-finder** | `--persona job-finder` | 4 | LinkedIn hiring post search, extraction, and ranking |
 
 ### Global Skills
 
@@ -157,6 +181,28 @@ X_LENS_PROVIDER=bedrock
 
 Make sure your AWS account has Bedrock model access enabled for Claude models in the specified region.
 
+### OpenRouter (open source models)
+
+```env
+OPENROUTER_API_KEY=sk-or-...
+X_LENS_PROVIDER=openrouter
+# Default model: qwen/qwen3-235b-a22b
+# Override with any model from openrouter.ai:
+# X_LENS_MODEL=qwen/qwen3-235b-a22b
+```
+
+Get your key at https://openrouter.ai/keys
+
+### Groq (fast open source inference)
+
+```env
+GROQ_API_KEY=gsk_...
+X_LENS_PROVIDER=groq
+# Default model: qwen/qwen3-32b
+```
+
+Get your key at https://console.groq.com/keys. Free tier available.
+
 ### MCP Servers (for skills)
 
 Some skills use MCP servers for data access:
@@ -170,13 +216,15 @@ MCP_MARKET_DATA_EXECUTABLE=/path/to/mcp-market-data-server
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `X_LENS_PROVIDER` | No | Default provider: `bedrock` or `anthropic` (default: `bedrock`) |
-| `X_LENS_MODEL` | No | Model ID override (e.g., `claude-sonnet-4-20250514` for Anthropic, `anthropic.claude-sonnet-4-20250514-v1:0` for Bedrock) |
+| `X_LENS_PROVIDER` | No | Provider: `bedrock`, `anthropic`, `openrouter`, or `groq` (default: `bedrock`) |
+| `X_LENS_MODEL` | No | Model ID override (provider-specific, see examples above) |
 | `ANTHROPIC_API_KEY` | If using anthropic | Anthropic API key |
 | `AWS_PROFILE` | If using bedrock | AWS CLI profile name |
 | `AWS_ACCESS_KEY_ID` | If using bedrock (no profile) | AWS access key |
 | `AWS_SECRET_ACCESS_KEY` | If using bedrock (no profile) | AWS secret key |
 | `AWS_REGION` | If using bedrock | AWS region (default: `us-east-1`) |
+| `OPENROUTER_API_KEY` | If using openrouter | OpenRouter API key |
+| `GROQ_API_KEY` | If using groq | Groq API key |
 | `MCP_OI_EXECUTABLE` | For OI analysis skill | Path to MCP open interest server binary |
 | `MCP_MARKET_DATA_EXECUTABLE` | For market data skill | Path to MCP market data server binary |
 
@@ -213,7 +261,7 @@ x-lens [options] [prompt]
 
 Options:
   --visible              Show browser window (default: headless)
-  --provider <provider>  AI provider: bedrock or anthropic (default from .env)
+  --provider <provider>  AI provider: bedrock, anthropic, openrouter, or groq (default from .env)
   --model <model>        Override model ID
   --persona <persona>    Persona to activate (e.g., trader, predictor)
   --new                  Start a new session (clear conversation history)
@@ -232,6 +280,12 @@ x-lens --persona predictor "find mispriced prediction markets"
 
 # Use Anthropic instead of Bedrock
 x-lens --provider anthropic "summarize this article at <url>"
+
+# Use open source models via OpenRouter
+x-lens --provider openrouter "summarize this article at <url>"
+
+# Use Groq for fast inference
+x-lens --provider groq --persona job-finder "find senior engineer roles in Seattle"
 
 # Watch the browser work
 x-lens --visible "log into my bank and check my balance"
@@ -321,9 +375,58 @@ Job types:
 
 The agent can create new jobs, delete old ones, and adapt its monitoring based on what it learns. Jobs persist in `~/.x-lens/jobs.json`.
 
-### Per-Persona Sessions
+### Per-Persona Isolation
 
-Each persona gets its own persistent session file (`~/.x-lens/sessions/<persona>.jsonl`). The daemon resumes context across restarts — the agent remembers what it found in previous runs.
+Each persona is fully isolated across five dimensions:
+
+- **Browser profile** — each persona gets its own Chromium profile (`~/.x-lens/browser-profiles/<persona>/`), so cookies, auth state, and localStorage never collide between personas.
+- **Session history** — each persona gets its own session file (`~/.x-lens/sessions/<persona>.jsonl`). The daemon resumes context across restarts.
+- **System prompt** — each persona has its own identity and instructions, focused and token-efficient.
+- **Skills loaded** — only the persona's skills (plus global) are loaded. No cross-contamination.
+- **Scheduled jobs** — when the agent calls `schedule_create`, the system auto-fills the persona from runtime context. Jobs are dispatched to the correct persona's agent instance.
+
+## Job-Finder Persona
+
+The `job-finder` persona searches LinkedIn for hiring posts and saves ranked results.
+
+### Setup
+
+1. Create LinkedIn credentials file:
+```bash
+echo "email=your@email.com" > ~/.x-lens/.linkedin-creds
+echo "password=yourpassword" >> ~/.x-lens/.linkedin-creds
+```
+
+2. Log in manually once (for 2FA/CAPTCHA):
+```bash
+x-lens --persona job-finder --visible
+# Then say: "Log into LinkedIn"
+```
+
+3. Create a search job:
+```bash
+x-lens --persona job-finder "find posts about hiring senior+ backend engineers at FAANG in Seattle"
+```
+
+4. Or run as daemon:
+```bash
+x-lens daemon start --persona job-finder
+```
+
+### Results
+
+Results are saved to `~/.x-lens/linkedin-posts.jsonl` — one JSON object per line with author, company, text, URL, relevance score, and ranking reason.
+
+Browse results in your browser at **http://localhost:3456/jobs** — a sortable, searchable table with expandable rows and "View on LinkedIn" links.
+
+### Skills
+
+| Skill | Purpose |
+|-------|---------|
+| `linkedin-search` | Decompose prompts into search queries |
+| `post-extraction` | Extract structured data from LinkedIn DOM |
+| `post-ranking` | Score and rank posts by relevance |
+| `linkedin-login` | Handle authentication and 2FA |
 
 ## Memory & Persistence
 
@@ -336,8 +439,9 @@ x-lens stores persistent data in `~/.x-lens/`:
 | Session (daemon) | `~/.x-lens/sessions/<persona>.jsonl` | Per-persona daemon sessions. Persist across daemon restarts. |
 | Jobs | `~/.x-lens/jobs.json` | Agent-managed scheduled jobs for the daemon. |
 | Daemon log | `~/.x-lens/daemon.log` | Daemon stdout/stderr when running via launchd. |
-| Browser profile | `~/.x-lens/browser-profile/` | Persistent Chromium profile — cookies, auth, localStorage survive across runs. |
+| Browser profiles | `~/.x-lens/browser-profiles/<persona>/` | Per-persona Chromium profiles — cookies, auth, localStorage isolated per persona. |
 | OI cache | `~/.x-lens/oi-cache/` | Cached open interest data for day-over-day delta calculations. |
+| LinkedIn posts | `~/.x-lens/linkedin-posts.jsonl` | Job-finder results — one JSON object per line with author, company, text, URL, relevance score, and ranking reason. |
 
 The agent can read and write its own memory during a session. It will remember things like your preferences, frequently used sites, and useful context across conversations.
 
@@ -348,6 +452,9 @@ When running, a status page is available at **http://localhost:3456** showing:
 - Browser screenshots
 - Tool usage logs
 - Errors
+
+Additional pages:
+- **/jobs** — browse LinkedIn hiring post results (sortable table, search, expandable rows, "View on LinkedIn" links)
 
 If port 3456 is busy, it automatically tries the next available port (up to 3465).
 
@@ -398,7 +505,8 @@ x-lens/
 ├── skills/          # All skills (global + per-persona)
 │   ├── global/      # Always loaded
 │   ├── trader/      # Trading & market analysis skills
-│   └── predictor/   # Prediction market skills
+│   ├── predictor/   # Prediction market skills
+│   └── job-finder/  # LinkedIn hiring post search & ranking
 ├── .env             # Credentials (git-ignored)
 └── .env.example     # Credential template
 ```
@@ -432,3 +540,15 @@ npm run clean && npm run build
 5. The browser uses a persistent Chrome profile, so it stays logged into your accounts
 6. Sessions are preserved — pick up where you left off, or use `--new` to start fresh
 7. The agent reports back with results rendered as rich terminal markdown
+
+## Disclaimer
+
+x-lens is a personal project built for educational purposes only.
+
+**Trading:** The trading skills and market analysis outputs are for informational and educational purposes only. Do not make investment decisions based solely on this agent's output. Always do your own research and consult a qualified financial advisor before trading.
+
+**Job search:** The job finder persona automates browsing of publicly visible LinkedIn posts. It does not bypass any access controls or scrape private data. Use responsibly and in compliance with LinkedIn's terms of service. Results are not guaranteed to be complete or accurate.
+
+**Prediction markets:** The predictor persona analyzes publicly available prediction market data. It does not place bets or execute trades on your behalf unless explicitly instructed. Prediction market participation may be subject to legal restrictions in your jurisdiction. Do your own research before placing any positions.
+
+This software is provided as is with no warranty of any kind. The author assumes no liability for any financial losses, legal issues, missed opportunities, or other damages arising from the use of this software or any of its personas and skills. Use entirely at your own risk.

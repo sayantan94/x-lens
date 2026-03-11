@@ -18,8 +18,8 @@ import { completeSimple } from "@mariozechner/pi-ai";
 // Settings
 // ---------------------------------------------------------------------------
 
-/** Tokens reserved for prompt + response headroom */
-const RESERVE_TOKENS = 16384;
+/** Tokens reserved for prompt + response headroom (must be >= max_tokens sent to API) */
+const RESERVE_TOKENS = 40000;
 
 /** Recent tokens to keep after compaction (not summarized) */
 const KEEP_RECENT_TOKENS = 20000;
@@ -44,6 +44,8 @@ const OVERFLOW_PATTERNS = [
 	/context[_ ]length[_ ]exceeded/i,
 	/too many tokens/i,
 	/token limit exceeded/i,
+	/input length and.*max_tokens.*exceed/i,
+	/exceed context limit/i,
 ];
 
 export function isContextOverflow(message: AssistantMessage): boolean {
@@ -200,17 +202,36 @@ export interface CompactionResult {
  * Find the cut point — keep enough recent messages to stay under KEEP_RECENT_TOKENS.
  * Returns the index where we start keeping messages.
  */
+function estimateMessageTokens(msg: Message): number {
+	let chars = 0;
+	const content = (msg as any).content;
+	if (typeof content === "string") {
+		chars = content.length;
+	} else if (Array.isArray(content)) {
+		for (const part of content) {
+			if (part.type === "text" && part.text) {
+				chars += part.text.length;
+			} else if (part.type === "image" && part.data) {
+				// base64 images are huge — estimate ~1K tokens per image
+				chars += 4000;
+			} else if (part.type === "toolCall") {
+				const argsStr = JSON.stringify(part.arguments ?? {});
+				chars += argsStr.length;
+			}
+		}
+	}
+	return Math.ceil(chars / CHARS_PER_TOKEN);
+}
+
 function findCutPoint(messages: Message[]): number {
 	let tokenEstimate = 0;
 	for (let i = messages.length - 1; i >= 0; i--) {
-		const msg = messages[i];
-		const text = extractText((msg as any).content) ?? "";
-		tokenEstimate += Math.ceil(text.length / CHARS_PER_TOKEN);
+		tokenEstimate += estimateMessageTokens(messages[i]);
 		if (tokenEstimate > KEEP_RECENT_TOKENS) {
 			return i + 1;
 		}
 	}
-	return 0; // keep everything (shouldn't happen if compaction was triggered)
+	return 0;
 }
 
 /**
@@ -221,12 +242,24 @@ export async function compact(
 	agent: Agent,
 	model: Model<Api>,
 	log?: (msg: string) => void,
+	emergency = false,
 ): Promise<CompactionResult | null> {
 	const messages = agent.state.messages as Message[];
-	if (messages.length < 4) return null; // nothing meaningful to compact
+	if (messages.length < 2) return null;
 
-	const cutPoint = findCutPoint(messages);
-	if (cutPoint <= 1) return null; // not enough to summarize
+	// In non-emergency mode, be conservative
+	if (!emergency && messages.length < 4) return null;
+
+	let cutPoint = findCutPoint(messages);
+
+	// In emergency mode, if findCutPoint returns 0/1 (everything is "recent"),
+	// force-compact all but the last 2 messages
+	if (cutPoint <= 1 && emergency) {
+		cutPoint = Math.max(1, messages.length - 2);
+		log?.("Emergency: forcing aggressive compaction");
+	}
+
+	if (cutPoint <= 0) return null;
 
 	const toSummarize = messages.slice(0, cutPoint);
 	const toKeep = messages.slice(cutPoint);
