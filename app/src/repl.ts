@@ -452,7 +452,7 @@ export async function runInteractive(options: ReplOptions = {}): Promise<void> {
 				}
 
 				setTimeout(() => {
-					compact(agent, model, (msg: string) => showCompactionMessage(msg)).then((result) => {
+					compact(agent, model, (msg: string) => showCompactionMessage(msg), true).then((result) => {
 						if (result) {
 							saveSessionMessages(agent.state.messages as Message[]);
 							showCompactionMessage("Retrying after compaction...");

@@ -28,7 +28,8 @@ async function browserResult(
   browser: BrowserController,
 ): Promise<(TextContent | ImageContent)[]> {
   const snap = await browser.snapshot();
-  const tree = truncateText(snap.accessibilityTree, 30_000);
+  const snapshotText = truncateText(snap.snapshot, 30_000);
+  const label = snap.snapshotMode === "ai" ? "Page Snapshot" : "Accessibility Tree";
   return [
     {
       type: "image" as const,
@@ -37,7 +38,7 @@ async function browserResult(
     },
     {
       type: "text" as const,
-      text: `URL: ${snap.url}\nTitle: ${snap.title}\n\nAccessibility Tree:\n${tree}`,
+      text: `URL: ${snap.url}\nTitle: ${snap.title}\n\n${label}:\n${snapshotText}`,
     },
   ];
 }
