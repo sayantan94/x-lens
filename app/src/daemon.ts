@@ -506,6 +506,13 @@ async function executeJob(
     logError(`[${job.persona}] Job "${job.id}" failed: ${msg}`);
     if (job.notify) {
       notify(`[${job.persona.toUpperCase()}] Job Failed`, `${job.id}: ${msg}`);
+      if (telegramBot) {
+        try {
+          await telegramBot.sendText(`❌ *[${job.persona}/${job.id}] Failed:* ${msg}`);
+        } catch (e) {
+          logError(`[telegram] Failed to send error: ${e}`);
+        }
+      }
     }
   } finally {
     status.addUpdate({
