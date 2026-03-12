@@ -40,6 +40,7 @@ daemon
   .option("--model <model>", "Override model ID")
   .option("--persona <persona>", "Persona to run (default: trader)", "trader")
   .option("--foreground", "Run in foreground (don't daemonize)")
+  .option("--telegram", "Enable Telegram bot for group messaging")
   .action(async (options) => {
     const { getDaemonPid } = await import("./daemon.js");
     const existingPid = getDaemonPid();
@@ -69,6 +70,7 @@ daemon
     if (options.provider) args.push("--provider", options.provider);
     if (options.model) args.push("--model", options.model);
     if (options.persona) args.push("--persona", options.persona);
+    if (options.telegram) args.push("--telegram");
 
     const child = spawn(process.execPath, [process.argv[1], ...args], {
       detached: true,
