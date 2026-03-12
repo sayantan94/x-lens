@@ -144,6 +144,8 @@ export function createTelegramBot(
       // We intentionally do not await it — it runs in the background.
       bot.start({
         onStart: () => log("Telegram bot is now receiving updates"),
+      }).catch((err) => {
+        log(`Telegram bot polling failed: ${err.message}`);
       });
     },
 
@@ -165,7 +167,7 @@ export function createTelegramBot(
       await bot.api.sendPhoto(
         config.groupId,
         new InputFile(buffer),
-        caption ? { caption } : undefined,
+        caption ? { caption: caption.slice(0, 1024) } : undefined,
       );
     },
 
