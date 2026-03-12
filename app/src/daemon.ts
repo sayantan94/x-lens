@@ -1,7 +1,7 @@
 import { Agent, type AgentEvent } from "@mariozechner/pi-agent-core";
 import { getModel, type Message, type Model, type Api } from "@mariozechner/pi-ai";
 import cron from "node-cron";
-import { existsSync, writeFileSync, readFileSync, unlinkSync, mkdirSync, appendFileSync } from "node:fs";
+import { existsSync, writeFileSync, readFileSync, unlinkSync, mkdirSync, appendFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import { BrowserController } from "./browser.js";
@@ -573,20 +573,29 @@ export async function startDaemon(options: {
       // Per-sender persona tracking
       const senderPersonas = new Map<number, string>();
 
-      telegramBot.onMessage(async (userId, text) => {
+      const getAvailablePersonas = (): string[] => {
+        const skillsDir = join(projectRoot, "skills");
+        return readdirSync(skillsDir, { withFileTypes: true })
+          .filter((d) => d.isDirectory() && d.name !== "global")
+          .map((d) => d.name);
+      };
+
+      telegramBot.onMessage((userId, text) => {
+        (async () => {
         // Handle slash commands
         if (text.startsWith("/persona ")) {
           const arg = text.slice("/persona ".length).trim();
           if (arg === "list") {
-            const { readdirSync } = await import("node:fs");
-            const skillsDir = join(projectRoot, "skills");
-            const personas = readdirSync(skillsDir, { withFileTypes: true })
-              .filter((d) => d.isDirectory() && d.name !== "global")
-              .map((d) => d.name);
+            const personas = getAvailablePersonas();
             const current = senderPersonas.get(userId) || persona;
             await telegramBot!.sendText(
               `*Available personas:*\n${personas.map((p) => `${p === current ? "→ " : "  "}${p}`).join("\n")}`,
             );
+            return;
+          }
+          const available = getAvailablePersonas();
+          if (!available.includes(arg)) {
+            await telegramBot!.sendText(`Unknown persona: *${arg}*\nAvailable: ${available.join(", ")}`);
             return;
           }
           senderPersonas.set(userId, arg);
@@ -596,10 +605,11 @@ export async function startDaemon(options: {
         }
 
         if (text === "/status") {
-          const jobs = jobStore.list().filter((j) => j.persona === persona);
+          const activePersona = senderPersonas.get(userId) || persona;
+          const jobs = jobStore.list().filter((j) => j.persona === activePersona);
           const running = jobs.filter((j) => j.enabled).length;
           await telegramBot!.sendText(
-            `*Daemon status:* running\n*Persona:* ${persona}\n*Jobs:* ${running} active / ${jobs.length} total`,
+            `*Daemon status:* running\n*Persona:* ${activePersona}\n*Jobs:* ${running} active / ${jobs.length} total`,
           );
           return;
         }
@@ -680,11 +690,14 @@ export async function startDaemon(options: {
         } catch (err) {
           const errMsg = err instanceof Error ? err.message : String(err);
           log(`[telegram] Error: ${errMsg}`);
-          await telegramBot!.sendText(`Error: ${errMsg}`);
+          try { await telegramBot!.sendText(`Error: ${errMsg}`); } catch { /* ignore */ }
         } finally {
           unsubscribe();
           pa.busy = false;
         }
+        })().catch((err) => {
+          log(`[telegram] Unhandled error in message handler: ${err instanceof Error ? err.message : String(err)}`);
+        });
       });
 
       telegramBot.start();
