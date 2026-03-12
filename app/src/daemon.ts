@@ -18,6 +18,7 @@ import { notify } from "./notify.js";
 import { shouldCompact, isContextOverflow, compact } from "./compaction.js";
 import { StatusServer } from "./status-server.js";
 import { formatToolLabel, extractResultPreview } from "./render.js";
+import { loadTelegramConfig, createTelegramBot, type TelegramBot } from "./telegram.js";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -308,6 +309,7 @@ async function executeJob(
   provider: string,
   status: StatusServer,
   modelId?: string,
+  telegramBot?: TelegramBot | null,
 ): Promise<void> {
   const pa = getOrCreatePersonaAgent(job.persona, jobStore, projectRoot, provider, modelId);
 
@@ -465,10 +467,24 @@ async function executeJob(
         const body = alertParts[1] || summary;
         notify(title, body);
         log(`[${job.persona}] Alert notification: ${title}`);
+        if (telegramBot) {
+          try {
+            await telegramBot.sendText(`🚨 *${alertParts[0]}*\n${alertParts[1] || summary}`);
+          } catch (e) {
+            logError(`[telegram] Failed to send alert: ${e}`);
+          }
+        }
       } else {
         // No alert — still notify with job summary
         notify(`${job.id}`, summary.slice(0, 200));
         log(`[${job.persona}] Summary notification for ${job.id}`);
+        if (telegramBot) {
+          try {
+            await telegramBot.sendText(`*[${job.persona}/${job.id}]* ${summary.slice(0, 200)}`);
+          } catch (e) {
+            logError(`[telegram] Failed to send summary: ${e}`);
+          }
+        }
       }
     }
 
@@ -519,6 +535,7 @@ export async function startDaemon(options: {
   provider?: string;
   model?: string;
   persona?: string;
+  telegram?: boolean;
 } = {}): Promise<void> {
   const provider = options.provider || process.env.X_LENS_PROVIDER || "bedrock";
   const modelId = options.model || process.env.X_LENS_MODEL;
@@ -536,6 +553,137 @@ export async function startDaemon(options: {
   log(`Provider: ${provider}, Persona: ${persona}, PID: ${process.pid}`);
 
   await status.start();
+
+  // Start Telegram bot if configured
+  let telegramBot: TelegramBot | null = null;
+  if (options.telegram) {
+    const tgConfig = loadTelegramConfig();
+    if (!tgConfig) {
+      log("WARNING: --telegram flag set but X_LENS_TELEGRAM_TOKEN or X_LENS_TELEGRAM_GROUP_ID not configured. Skipping Telegram.");
+    } else {
+      telegramBot = createTelegramBot(tgConfig, log);
+
+      // Per-sender persona tracking
+      const senderPersonas = new Map<number, string>();
+
+      telegramBot.onMessage(async (userId, text) => {
+        // Handle slash commands
+        if (text.startsWith("/persona ")) {
+          const arg = text.slice("/persona ".length).trim();
+          if (arg === "list") {
+            const { readdirSync } = await import("node:fs");
+            const skillsDir = join(projectRoot, "skills");
+            const personas = readdirSync(skillsDir, { withFileTypes: true })
+              .filter((d) => d.isDirectory() && d.name !== "global")
+              .map((d) => d.name);
+            const current = senderPersonas.get(userId) || persona;
+            await telegramBot!.sendText(
+              `*Available personas:*\n${personas.map((p) => `${p === current ? "→ " : "  "}${p}`).join("\n")}`,
+            );
+            return;
+          }
+          senderPersonas.set(userId, arg);
+          await telegramBot!.sendText(`Switched to persona: *${arg}*`);
+          log(`[telegram] User ${userId} switched to persona: ${arg}`);
+          return;
+        }
+
+        if (text === "/status") {
+          const jobs = jobStore.list().filter((j) => j.persona === persona);
+          const running = jobs.filter((j) => j.enabled).length;
+          await telegramBot!.sendText(
+            `*Daemon status:* running\n*Persona:* ${persona}\n*Jobs:* ${running} active / ${jobs.length} total`,
+          );
+          return;
+        }
+
+        if (text === "/help") {
+          await telegramBot!.sendText(
+            `*Commands:*\n` +
+            `/persona <name> — switch persona\n` +
+            `/persona list — list personas\n` +
+            `/status — daemon status\n` +
+            `/help — this message\n\n` +
+            `Or just @mention me with a task.`,
+          );
+          return;
+        }
+
+        // Route to persona agent
+        const activePersona = senderPersonas.get(userId) || persona;
+        const pa = getOrCreatePersonaAgent(activePersona, jobStore, projectRoot, provider, modelId);
+
+        if (pa.busy) {
+          await telegramBot!.sendText(`⏳ Agent is busy with another task. Please wait.`);
+          return;
+        }
+
+        pa.busy = true;
+        log(`[telegram] Routing to ${activePersona} agent: ${text.slice(0, 100)}`);
+
+        let responseText = "";
+        const unsubscribe = pa.agent.subscribe((event: AgentEvent) => {
+          if (event.type === "message_update" && event.assistantMessageEvent.type === "text_delta") {
+            responseText += event.assistantMessageEvent.delta;
+          }
+          if (event.type === "message_end") {
+            appendPersonaSessionMessage(`telegram-${activePersona}`, event.message as Message);
+          }
+        });
+
+        try {
+          const userMessage: Message = {
+            role: "user",
+            content: [{ type: "text", text }],
+            timestamp: Date.now(),
+          };
+          await pa.agent.prompt(userMessage);
+          await pa.agent.waitForIdle();
+
+          if (responseText) {
+            const prefixed = `*[${activePersona}]* ${responseText}`;
+            await telegramBot!.sendText(prefixed);
+
+            // Send any screenshots from browser tools
+            const messages = pa.agent.state.messages;
+            const lastMessages = messages.slice(-10);
+            for (const msg of lastMessages) {
+              if ((msg as any).role === "toolResult") {
+                const content = (msg as any).content;
+                if (Array.isArray(content)) {
+                  const img = content.find((c: any) => c.type === "image");
+                  if (img?.data) {
+                    const buf = Buffer.from(img.data, "base64");
+                    await telegramBot!.sendImage(buf, "Browser screenshot");
+                  }
+                }
+              }
+            }
+          }
+
+          // Compact if needed
+          const model = resolveModel(provider, modelId);
+          if (shouldCompact(pa.lastInputTokens + pa.lastCacheReadTokens, model.contextWindow)) {
+            log(`[telegram][${activePersona}] Compacting session...`);
+            const result = await compact(pa.agent, model, (msg) => log(`[telegram][${activePersona}] ${msg}`));
+            if (result) {
+              savePersonaSession(`telegram-${activePersona}`, pa.agent.state.messages as Message[]);
+            }
+          }
+        } catch (err) {
+          const errMsg = err instanceof Error ? err.message : String(err);
+          log(`[telegram] Error: ${errMsg}`);
+          await telegramBot!.sendText(`Error: ${errMsg}`);
+        } finally {
+          unsubscribe();
+          pa.busy = false;
+        }
+      });
+
+      telegramBot.start();
+      log(`Telegram bot started as @${tgConfig.botUsername}`);
+    }
+  }
 
   // Seed default jobs if none exist for this persona
   const existingForPersona = jobStore.list().filter((j) => j.persona === persona);
@@ -689,16 +837,16 @@ export async function startDaemon(options: {
           continue;
         }
         const task = cron.schedule(job.schedule, () => {
-          executeJob(job, jobStore, projectRoot, provider, status, modelId);
+          executeJob(job, jobStore, projectRoot, provider, status, modelId, telegramBot);
         });
         cronTasks.push(task);
         log(`Scheduled cron job "${job.id}": ${job.schedule}`);
       } else if (job.type === "interval" && job.interval_minutes) {
         const ms = job.interval_minutes * 60 * 1000;
         // Run immediately on start, then at interval
-        executeJob(job, jobStore, projectRoot, provider, status, modelId);
+        executeJob(job, jobStore, projectRoot, provider, status, modelId, telegramBot);
         const iv = setInterval(() => {
-          executeJob(job, jobStore, projectRoot, provider, status, modelId);
+          executeJob(job, jobStore, projectRoot, provider, status, modelId, telegramBot);
         }, ms);
         intervals.push(iv);
         log(`Scheduled interval job "${job.id}": every ${job.interval_minutes}min`);
@@ -711,7 +859,7 @@ export async function startDaemon(options: {
           while (!ctrl.signal.aborted) {
             const currentJob = jobStore.get(job.id);
             if (!currentJob || !currentJob.enabled) break;
-            await executeJob(currentJob, jobStore, projectRoot, provider, status, modelId);
+            await executeJob(currentJob, jobStore, projectRoot, provider, status, modelId, telegramBot);
             await new Promise((r) => {
               const timeout = setTimeout(r, pauseMs);
               ctrl.signal.addEventListener("abort", () => { clearTimeout(timeout); r(undefined); }, { once: true });
@@ -753,6 +901,9 @@ export async function startDaemon(options: {
     }
 
     try { await status.stop(); } catch { /* ignore */ }
+    if (telegramBot) {
+      try { await telegramBot.stop(); } catch { /* ignore */ }
+    }
     try { unlinkSync(PID_FILE); } catch { /* ignore */ }
     process.exit(0);
   };
