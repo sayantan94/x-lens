@@ -69,7 +69,7 @@ When you run `x-lens --persona trader`, the agent:
 
 | Persona | Flag | Skills | Focus |
 |---------|------|--------|-------|
-| **trader** | `--persona trader` | ~40 | Market analysis, screening, earnings, strategy, portfolio, options, OI analysis. Trading skills and market data pipelines are powered by [Fintools-AI](https://github.com/fintools-ai). |
+| **trader** | `--persona trader` | ~40 | Market analysis, screening, earnings, strategy, portfolio, options, OI analysis |
 | **predictor** | `--persona predictor` | 1 | Prediction market trading on Polymarket & Kalshi |
 | **job-finder** | `--persona job-finder` | 4 | LinkedIn hiring post search, extraction, and ranking |
 
@@ -225,6 +225,11 @@ MCP_MARKET_DATA_EXECUTABLE=/path/to/mcp-market-data-server
 | `AWS_REGION` | If using bedrock | AWS region (default: `us-east-1`) |
 | `OPENROUTER_API_KEY` | If using openrouter | OpenRouter API key |
 | `GROQ_API_KEY` | If using groq | Groq API key |
+| `FMP_API_KEY` | For ~25 trader skills | Financial Modeling Prep API key ([get one here](https://financialmodelingprep.com/developer/docs)) |
+| `ALPACA_API_KEY` | For portfolio-manager skill | Alpaca trading API key |
+| `ALPACA_API_SECRET` | For portfolio-manager skill | Alpaca trading API secret |
+| `FINVIZ_EMAIL` | No | FINVIZ Elite email (optional, improves dividend screeners) |
+| `FINVIZ_PASSWORD` | No | FINVIZ Elite password |
 | `MCP_OI_EXECUTABLE` | For OI analysis skill | Path to MCP open interest server binary |
 | `MCP_MARKET_DATA_EXECUTABLE` | For market data skill | Path to MCP market data server binary |
 | `X_LENS_TELEGRAM_TOKEN` | If using --telegram | Telegram bot token from @BotFather |
