@@ -8,7 +8,7 @@ import { BrowserController } from "./browser.js";
 import { createTools } from "./tools.js";
 import { loadSkills, formatSkillsForPrompt } from "./skills.js";
 import { readMemory } from "./memory.js";
-import { JobStore, type Job, type CreateJobInput } from "./job-store.js";
+import { JobStore, type Job } from "./job-store.js";
 import {
   loadPersonaSession,
   appendPersonaSessionMessage,
@@ -39,7 +39,11 @@ function ensureDir(dir: string) {
 function log(msg: string): void {
   const timestamp = new Date().toISOString();
   const line = `[${timestamp}] ${msg}`;
-  console.log(line);
+  // When spawned in background, stdout is redirected to the log file.
+  // Only console.log if stdout is a TTY to avoid duplicate lines.
+  if (process.stdout.isTTY) {
+    console.log(line);
+  }
   ensureDir(X_LENS_DIR);
   appendFileSync(LOG_FILE, line + "\n", "utf-8");
 }
@@ -544,6 +548,17 @@ export async function startDaemon(options: {
   persona?: string;
   telegram?: boolean;
 } = {}): Promise<void> {
+  // Suppress EPIPE on stdout/stderr — expected when spawned in background
+  process.stdout?.on?.("error", () => {});
+  process.stderr?.on?.("error", () => {});
+  process.on("uncaughtException", (err) => {
+    if ((err as NodeJS.ErrnoException).code === "EPIPE" || err.message?.includes?.("EPIPE")) return;
+    logError(`Uncaught exception: ${err.message}`);
+  });
+  process.on("unhandledRejection", (reason) => {
+    logError(`Unhandled rejection: ${reason}`);
+  });
+
   const provider = options.provider || process.env.X_LENS_PROVIDER || "bedrock";
   const modelId = options.model || process.env.X_LENS_MODEL;
   const persona = options.persona || "trader";
@@ -654,8 +669,16 @@ export async function startDaemon(options: {
             content: [{ type: "text", text }],
             timestamp: Date.now(),
           };
-          await pa.agent.prompt(userMessage);
-          await pa.agent.waitForIdle();
+
+          // Timeout guard — abort if agent doesn't respond within 3 minutes
+          const AGENT_TIMEOUT_MS = 3 * 60 * 1000;
+          const timeout = new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error("Agent timed out after 3 minutes")), AGENT_TIMEOUT_MS),
+          );
+          await Promise.race([
+            (async () => { await pa.agent.prompt(userMessage); await pa.agent.waitForIdle(); })(),
+            timeout,
+          ]);
 
           if (responseText) {
             const prefixed = `*[${activePersona}]* ${responseText}`;
@@ -703,132 +726,6 @@ export async function startDaemon(options: {
       telegramBot.start();
       log(`Telegram bot started as @${tgConfig.botUsername}`);
     }
-  }
-
-  // Seed default jobs if none exist for this persona
-  const existingForPersona = jobStore.list().filter((j) => j.persona === persona);
-  if (existingForPersona.length === 0 && persona === "trader") {
-    log(`No jobs found for persona "${persona}" — seeding default monitoring schedule`);
-
-    const defaultJobs: CreateJobInput[] = [
-      {
-        id: "pre-market-briefing",
-        persona: "trader",
-        prompt: "Run the pre-market briefing. Check market regime (use market-regime-classifier), VIX level, overnight futures, key economic calendar events today. Classify regime as GREEN/YELLOW/RED. If regime changed from last run (check memory), alert me. Save the regime to memory.",
-        type: "cron",
-        schedule: "0 13 * * 1-5", // 8 AM ET = 1 PM UTC
-        notify: true,
-      },
-      {
-        id: "oi-morning-scan",
-        persona: "trader",
-        prompt: "Run full OI analysis (use oi-analysis skill) for SPY, QQQ, NVDA, TSLA, AAPL, MSFT, META, AMZN, GOOGL. Analyze each at 30/60/90 DTE. Alert me on any ticker with confidence >65%. Include trade setup with entry/stop/target. Compare to yesterday's positioning (check memory).",
-        type: "cron",
-        schedule: "30 13 * * 1-5", // 8:30 AM ET
-        notify: true,
-      },
-      {
-        id: "market-regime-check",
-        persona: "trader",
-        prompt: "Quick market regime check. Use market-regime-classifier and market-breadth-analyzer. Check SPY price vs 20DMA/50DMA, VIX level and trend, advance/decline ratio, new highs vs new lows. Compare to last check (memory). If regime changed or breadth is diverging from price, alert immediately.",
-        type: "interval",
-        interval_minutes: 60,
-        notify: true,
-      },
-      {
-        id: "sector-rotation-scan",
-        persona: "trader",
-        prompt: "Analyze sector rotation using sector-analyst skill. Compare relative strength of XLK, XLF, XLV, XLE, XLI, XLP, XLU, XLRE, XLC, XLB, XLY. Identify which sectors are leading/lagging. Check for rotation signals (money moving from one sector to another). Alert if significant rotation detected. Save sector rankings to memory.",
-        type: "cron",
-        schedule: "0 15 * * 1-5", // 10 AM ET
-        notify: true,
-      },
-      {
-        id: "breakout-screener",
-        persona: "trader",
-        prompt: "Run VCP screener (vcp-screener skill) and CANSLIM screener (canslim-screener skill) across the S&P 500. Look for stocks setting up or breaking out today. For any matches, check the OI positioning (oi-analysis skill) to see if institutions are confirming the move. Alert on high-conviction setups with institutional backing.",
-        type: "cron",
-        schedule: "0 16 * * 1-5", // 11 AM ET
-        notify: true,
-      },
-      {
-        id: "earnings-watch",
-        persona: "trader",
-        prompt: "Check earnings calendar for this week (earnings-calendar skill). For companies reporting today/tomorrow, analyze expected move vs implied volatility. Look for PEAD opportunities from recent reports (pead-screener skill). If any high-conviction earnings plays found, alert with trade setup.",
-        type: "cron",
-        schedule: "0 14 * * 1-5", // 9 AM ET
-        notify: true,
-      },
-      {
-        id: "market-close-summary",
-        persona: "trader",
-        prompt: "End-of-day market summary. How did the market close? What was today's regime? Any notable moves? Update your memory with: regime status, key levels for SPY/QQQ, any trades that triggered, sector rankings, and notes for tomorrow. This is your daily learning — be thorough in what you save to memory.",
-        type: "cron",
-        schedule: "15 21 * * 1-5", // 4:15 PM ET
-        notify: true,
-      },
-    ];
-
-    for (const job of defaultJobs) {
-      try {
-        jobStore.create(job);
-        log(`  Created default job: ${job.id}`);
-      } catch (err) {
-        logError(`  Failed to create default job ${job.id}: ${err}`);
-      }
-    }
-  }
-
-  if (existingForPersona.length === 0 && persona === "job-finder") {
-    log(`No jobs found for persona "${persona}" — seeding default LinkedIn outreach schedule`);
-
-    const jobFinderJobs: CreateJobInput[] = [
-      {
-        id: "linkedin-job-search",
-        persona: "job-finder",
-        prompt: "Search LinkedIn for Senior Software Engineer roles. Use the linkedin-search skill to generate diverse queries covering: 'senior software engineer hiring', 'senior SWE open role', 'hiring backend engineer senior', and company-specific queries for top tech companies. Extract and rank all posts using post-extraction and post-ranking skills. Save posts scoring above 0.3 to ~/.x-lens/linkedin-posts.jsonl.",
-        type: "cron",
-        schedule: "0 14 * * 1-5", // 9 AM ET = 2 PM UTC
-        notify: true,
-      },
-      {
-        id: "linkedin-feed-scan",
-        persona: "job-finder",
-        prompt: "Scan your LinkedIn feed for recent hiring posts. Scroll through the feed and look for posts containing: 'we\\'re hiring', 'join my team', 'open role', 'looking for engineers', 'growing the team'. Extract and rank any relevant posts using post-extraction and post-ranking skills. Focus on Senior Software Engineer or equivalent roles.",
-        type: "cron",
-        schedule: "0 16 * * 1-5", // 11 AM ET = 4 PM UTC
-        notify: true,
-      },
-      {
-        id: "linkedin-outreach",
-        persona: "job-finder",
-        prompt: "Process high-scoring posts and send outreach. Use the linkedin-outreach skill to: read posts scoring >= 0.7 from ~/.x-lens/linkedin-posts.jsonl, check ~/.x-lens/linkedin-outreach.jsonl to skip anyone contacted in the last 30 days, visit each author's profile, draft a casual personalized connection request or message, and send it. Max 10 outreach actions per run. Log all outreach to ~/.x-lens/linkedin-outreach.jsonl.",
-        type: "cron",
-        schedule: "0 18 * * 1-5", // 1 PM ET = 6 PM UTC
-        notify: true,
-      },
-      {
-        id: "outreach-summary",
-        persona: "job-finder",
-        prompt: "Weekly outreach summary. Read ~/.x-lens/linkedin-outreach.jsonl and ~/.x-lens/linkedin-posts.jsonl. Report: total outreach sent this week, breakdown by connection request vs direct message, top companies contacted, total high-scoring posts in pipeline, and any LinkedIn rate limit issues encountered. Check LinkedIn notifications for any responses to previous outreach and report those too.",
-        type: "cron",
-        schedule: "0 22 * * 5", // 5 PM ET Friday = 10 PM UTC
-        notify: true,
-      },
-    ];
-
-    for (const job of jobFinderJobs) {
-      try {
-        jobStore.create(job);
-        log(`  Created default job: ${job.id}`);
-      } catch (err) {
-        logError(`  Failed to create default job ${job.id}: ${err}`);
-      }
-    }
-  }
-
-  if (existingForPersona.length === 0 && persona !== "trader" && persona !== "job-finder") {
-    log(`No jobs found for persona "${persona}". Create jobs via REPL: x-lens --persona ${persona} "your prompt here"`);
   }
 
   const jobs = jobStore.list();
@@ -930,13 +827,6 @@ export async function startDaemon(options: {
 
   process.on("SIGTERM", shutdown);
   process.on("SIGINT", shutdown);
-
-  process.on("uncaughtException", (err) => {
-    logError(`Uncaught exception: ${err.message}`);
-  });
-  process.on("unhandledRejection", (reason) => {
-    logError(`Unhandled rejection: ${reason}`);
-  });
 
   log("Daemon running. Press Ctrl+C to stop.");
   notify("x-lens Daemon", "Daemon started and monitoring.");

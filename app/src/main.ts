@@ -10,6 +10,7 @@ program
   .name("x-lens")
   .description("Skills-based personal agent with browser capabilities")
   .version("0.1.0")
+  .enablePositionalOptions()
   .argument("[prompt]", "Task to execute (command mode)")
   .option("--visible", "Show browser window (default: headless)")
   .option("--model <model>", "Override model ID")
@@ -36,9 +37,9 @@ const daemon = program.command("daemon").description("Manage the x-lens backgrou
 daemon
   .command("start")
   .description("Start the daemon in the background")
-  .option("--provider <provider>", "AI provider", process.env.X_LENS_PROVIDER || "bedrock")
+  .option("--provider <provider>", "AI provider (default: from env or bedrock)")
   .option("--model <model>", "Override model ID")
-  .option("--persona <persona>", "Persona to run (default: trader)", "trader")
+  .option("--persona <persona>", "Persona to run (default: trader)")
   .option("--foreground", "Run in foreground (don't daemonize)")
   .option("--telegram", "Enable Telegram bot for group messaging")
   .action(async (options) => {

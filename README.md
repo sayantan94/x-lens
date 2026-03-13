@@ -21,7 +21,7 @@ A persona-based autonomous AI agent with browser capabilities. Adding a new doma
 | **LLM Providers** | Anthropic (direct API), AWS Bedrock (20+ model providers) |
 | **Personas** | `trader` (~40 skills), `job-finder` (4 skills), `predictor` (1 skill), or create your own |
 | **Tools** | Browser (6), Shell, HTTP, Memory (3), Scheduling (3) — 15 total |
-| **Modes** | Command (single task), REPL (interactive), Daemon (24/7 autonomous) |
+| **Modes** | Command (single task), REPL (interactive), Daemon (24/7 autonomous), Telegram (group chat) |
 | **Skills format** | Markdown with YAML frontmatter, optional `references/` directory for progressive disclosure |
 | **Browser** | Persistent Chromium via Playwright, per-persona profiles, headless or visible |
 | **Platform** | macOS (native notifications via osascript), Linux (daemon mode) |
@@ -227,6 +227,10 @@ MCP_MARKET_DATA_EXECUTABLE=/path/to/mcp-market-data-server
 | `GROQ_API_KEY` | If using groq | Groq API key |
 | `MCP_OI_EXECUTABLE` | For OI analysis skill | Path to MCP open interest server binary |
 | `MCP_MARKET_DATA_EXECUTABLE` | For market data skill | Path to MCP market data server binary |
+| `X_LENS_TELEGRAM_TOKEN` | If using --telegram | Telegram bot token from @BotFather |
+| `X_LENS_TELEGRAM_GROUP_ID` | If using --telegram | Telegram group chat ID |
+| `X_LENS_TELEGRAM_ALLOWLIST` | No | Comma-separated Telegram user IDs (empty = allow all in group) |
+| `X_LENS_TELEGRAM_BOT_USERNAME` | No | Bot username without @ (default: xlens_bot) |
 
 ## Usage
 
@@ -358,6 +362,59 @@ The agent marks actionable findings with `[ALERT]` in its output. The daemon det
 - Unusual open interest activity
 - Earnings surprises
 
+### Telegram Integration
+
+Connect the daemon to a Telegram group so you can message the agent and receive alerts.
+
+**Setup:**
+
+1. **Create the bot:**
+   - Open Telegram and message [@BotFather](https://t.me/botfather)
+   - Send `/newbot`
+   - BotFather will ask for a display name — enter something like `x-lens`
+   - BotFather will ask for a username (must end in `bot`) — enter something like `xlens_bot`
+   - BotFather replies with your **bot token** (looks like `123456789:ABCdefGHI-jklMNOpqrSTUvwxYZ`) — save this
+
+2. **Disable privacy mode** (so the bot can see group messages):
+   - Message @BotFather → `/setprivacy`
+   - Select your bot
+   - Choose `Disable`
+
+3. **Create a group and add the bot:**
+   - Create a new Telegram group
+   - Add your bot (`@xlens_bot`) as a member
+
+4. **Get your group chat ID:**
+   - Add [@userinfobot](https://t.me/userinfobot) to the group — it will reply with the group's chat ID (a negative number like `-100xxxxxxxxxx`)
+   - You can remove @userinfobot from the group after
+
+5. **Get your Telegram user ID:**
+   - Message [@userinfobot](https://t.me/userinfobot) directly — it replies with your user ID
+
+6. **Configure in `.env`:**
+
+```env
+X_LENS_TELEGRAM_TOKEN=123456:ABC-DEF...
+X_LENS_TELEGRAM_GROUP_ID=-100xxxxxxxxxx
+X_LENS_TELEGRAM_ALLOWLIST=your_user_id
+X_LENS_TELEGRAM_BOT_USERNAME=xlens_bot
+```
+
+7. Start the daemon with `--telegram`:
+
+```bash
+x-lens daemon start --persona trader --telegram
+```
+
+**Usage in group:**
+
+- `@xlens_bot scan for VCP breakout setups` — send a task
+- `@xlens_bot /persona list` — list available personas
+- `@xlens_bot /persona job-finder` — switch persona
+- `@xlens_bot /status` — check daemon status
+
+Daemon job alerts are automatically posted to the group.
+
 ### Agent-Driven Scheduling
 
 The agent manages its own schedule. It has three tools:
@@ -481,6 +538,8 @@ The agent has 15 tools available (12 core + 3 scheduling):
 | `schedule_list` | List all scheduled jobs with status |
 
 ## Project Structure
+
+The backend uses [pi-mom](https://github.com/nicholasgasior/pi-mom).
 
 ```
 x-lens/
