@@ -103,7 +103,23 @@ export class BrowserController {
         headless: this.config.headless,
         executablePath: this.config.executablePath,
         viewport: { width: 1280, height: 900 },
-        args: ["--disable-blink-features=AutomationControlled"],
+        userAgent:
+          "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_7_2) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+        args: [
+          "--disable-blink-features=AutomationControlled",
+          "--no-first-run",
+          "--no-default-browser-check",
+          "--disable-sync",
+          "--disable-background-networking",
+          "--disable-component-update",
+          "--disable-features=Translate,MediaRouter",
+          "--disable-session-crashed-bubble",
+          "--hide-crash-restore-bubble",
+          "--password-store=basic",
+          ...(process.platform === "linux"
+            ? ["--disable-dev-shm-usage", "--no-sandbox", "--disable-setuid-sandbox"]
+            : []),
+        ],
       },
     );
 

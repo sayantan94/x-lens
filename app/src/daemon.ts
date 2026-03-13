@@ -1,14 +1,14 @@
 import { Agent, type AgentEvent } from "@mariozechner/pi-agent-core";
 import { getModel, type Message, type Model, type Api } from "@mariozechner/pi-ai";
 import cron from "node-cron";
-import { existsSync, writeFileSync, readFileSync, unlinkSync, mkdirSync, appendFileSync } from "node:fs";
+import { existsSync, writeFileSync, readFileSync, unlinkSync, mkdirSync, appendFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import { BrowserController } from "./browser.js";
 import { createTools } from "./tools.js";
 import { loadSkills, formatSkillsForPrompt } from "./skills.js";
 import { readMemory } from "./memory.js";
-import { JobStore, type Job, type CreateJobInput } from "./job-store.js";
+import { JobStore, type Job } from "./job-store.js";
 import {
   loadPersonaSession,
   appendPersonaSessionMessage,
@@ -18,6 +18,7 @@ import { notify } from "./notify.js";
 import { shouldCompact, isContextOverflow, compact } from "./compaction.js";
 import { StatusServer } from "./status-server.js";
 import { formatToolLabel, extractResultPreview } from "./render.js";
+import { loadTelegramConfig, createTelegramBot, type TelegramBot } from "./telegram.js";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -38,7 +39,11 @@ function ensureDir(dir: string) {
 function log(msg: string): void {
   const timestamp = new Date().toISOString();
   const line = `[${timestamp}] ${msg}`;
-  console.log(line);
+  // When spawned in background, stdout is redirected to the log file.
+  // Only console.log if stdout is a TTY to avoid duplicate lines.
+  if (process.stdout.isTTY) {
+    console.log(line);
+  }
   ensureDir(X_LENS_DIR);
   appendFileSync(LOG_FILE, line + "\n", "utf-8");
 }
@@ -308,6 +313,7 @@ async function executeJob(
   provider: string,
   status: StatusServer,
   modelId?: string,
+  telegramBot?: TelegramBot | null,
 ): Promise<void> {
   const pa = getOrCreatePersonaAgent(job.persona, jobStore, projectRoot, provider, modelId);
 
@@ -465,10 +471,24 @@ async function executeJob(
         const body = alertParts[1] || summary;
         notify(title, body);
         log(`[${job.persona}] Alert notification: ${title}`);
+        if (telegramBot) {
+          try {
+            await telegramBot.sendText(`🚨 *${alertParts[0]}*\n${alertParts[1] || summary}`);
+          } catch (e) {
+            logError(`[telegram] Failed to send alert: ${e}`);
+          }
+        }
       } else {
         // No alert — still notify with job summary
         notify(`${job.id}`, summary.slice(0, 200));
         log(`[${job.persona}] Summary notification for ${job.id}`);
+        if (telegramBot) {
+          try {
+            await telegramBot.sendText(`*[${job.persona}/${job.id}]* ${summary.slice(0, 200)}`);
+          } catch (e) {
+            logError(`[telegram] Failed to send summary: ${e}`);
+          }
+        }
       }
     }
 
@@ -490,6 +510,13 @@ async function executeJob(
     logError(`[${job.persona}] Job "${job.id}" failed: ${msg}`);
     if (job.notify) {
       notify(`[${job.persona.toUpperCase()}] Job Failed`, `${job.id}: ${msg}`);
+      if (telegramBot) {
+        try {
+          await telegramBot.sendText(`❌ *[${job.persona}/${job.id}] Failed:* ${msg}`);
+        } catch (e) {
+          logError(`[telegram] Failed to send error: ${e}`);
+        }
+      }
     }
   } finally {
     status.addUpdate({
@@ -519,7 +546,19 @@ export async function startDaemon(options: {
   provider?: string;
   model?: string;
   persona?: string;
+  telegram?: boolean;
 } = {}): Promise<void> {
+  // Suppress EPIPE on stdout/stderr — expected when spawned in background
+  process.stdout?.on?.("error", () => {});
+  process.stderr?.on?.("error", () => {});
+  process.on("uncaughtException", (err) => {
+    if ((err as NodeJS.ErrnoException).code === "EPIPE" || err.message?.includes?.("EPIPE")) return;
+    logError(`Uncaught exception: ${err.message}`);
+  });
+  process.on("unhandledRejection", (reason) => {
+    logError(`Unhandled rejection: ${reason}`);
+  });
+
   const provider = options.provider || process.env.X_LENS_PROVIDER || "bedrock";
   const modelId = options.model || process.env.X_LENS_MODEL;
   const persona = options.persona || "trader";
@@ -537,130 +576,156 @@ export async function startDaemon(options: {
 
   await status.start();
 
-  // Seed default jobs if none exist for this persona
-  const existingForPersona = jobStore.list().filter((j) => j.persona === persona);
-  if (existingForPersona.length === 0 && persona === "trader") {
-    log(`No jobs found for persona "${persona}" — seeding default monitoring schedule`);
+  // Start Telegram bot if configured
+  let telegramBot: TelegramBot | null = null;
+  if (options.telegram) {
+    const tgConfig = loadTelegramConfig();
+    if (!tgConfig) {
+      log("WARNING: --telegram flag set but X_LENS_TELEGRAM_TOKEN or X_LENS_TELEGRAM_GROUP_ID not configured. Skipping Telegram.");
+    } else {
+      telegramBot = createTelegramBot(tgConfig, log);
 
-    const defaultJobs: CreateJobInput[] = [
-      {
-        id: "pre-market-briefing",
-        persona: "trader",
-        prompt: "Run the pre-market briefing. Check market regime (use market-regime-classifier), VIX level, overnight futures, key economic calendar events today. Classify regime as GREEN/YELLOW/RED. If regime changed from last run (check memory), alert me. Save the regime to memory.",
-        type: "cron",
-        schedule: "0 13 * * 1-5", // 8 AM ET = 1 PM UTC
-        notify: true,
-      },
-      {
-        id: "oi-morning-scan",
-        persona: "trader",
-        prompt: "Run full OI analysis (use oi-analysis skill) for SPY, QQQ, NVDA, TSLA, AAPL, MSFT, META, AMZN, GOOGL. Analyze each at 30/60/90 DTE. Alert me on any ticker with confidence >65%. Include trade setup with entry/stop/target. Compare to yesterday's positioning (check memory).",
-        type: "cron",
-        schedule: "30 13 * * 1-5", // 8:30 AM ET
-        notify: true,
-      },
-      {
-        id: "market-regime-check",
-        persona: "trader",
-        prompt: "Quick market regime check. Use market-regime-classifier and market-breadth-analyzer. Check SPY price vs 20DMA/50DMA, VIX level and trend, advance/decline ratio, new highs vs new lows. Compare to last check (memory). If regime changed or breadth is diverging from price, alert immediately.",
-        type: "interval",
-        interval_minutes: 60,
-        notify: true,
-      },
-      {
-        id: "sector-rotation-scan",
-        persona: "trader",
-        prompt: "Analyze sector rotation using sector-analyst skill. Compare relative strength of XLK, XLF, XLV, XLE, XLI, XLP, XLU, XLRE, XLC, XLB, XLY. Identify which sectors are leading/lagging. Check for rotation signals (money moving from one sector to another). Alert if significant rotation detected. Save sector rankings to memory.",
-        type: "cron",
-        schedule: "0 15 * * 1-5", // 10 AM ET
-        notify: true,
-      },
-      {
-        id: "breakout-screener",
-        persona: "trader",
-        prompt: "Run VCP screener (vcp-screener skill) and CANSLIM screener (canslim-screener skill) across the S&P 500. Look for stocks setting up or breaking out today. For any matches, check the OI positioning (oi-analysis skill) to see if institutions are confirming the move. Alert on high-conviction setups with institutional backing.",
-        type: "cron",
-        schedule: "0 16 * * 1-5", // 11 AM ET
-        notify: true,
-      },
-      {
-        id: "earnings-watch",
-        persona: "trader",
-        prompt: "Check earnings calendar for this week (earnings-calendar skill). For companies reporting today/tomorrow, analyze expected move vs implied volatility. Look for PEAD opportunities from recent reports (pead-screener skill). If any high-conviction earnings plays found, alert with trade setup.",
-        type: "cron",
-        schedule: "0 14 * * 1-5", // 9 AM ET
-        notify: true,
-      },
-      {
-        id: "market-close-summary",
-        persona: "trader",
-        prompt: "End-of-day market summary. How did the market close? What was today's regime? Any notable moves? Update your memory with: regime status, key levels for SPY/QQQ, any trades that triggered, sector rankings, and notes for tomorrow. This is your daily learning — be thorough in what you save to memory.",
-        type: "cron",
-        schedule: "15 21 * * 1-5", // 4:15 PM ET
-        notify: true,
-      },
-    ];
+      // Per-sender persona tracking
+      const senderPersonas = new Map<number, string>();
 
-    for (const job of defaultJobs) {
-      try {
-        jobStore.create(job);
-        log(`  Created default job: ${job.id}`);
-      } catch (err) {
-        logError(`  Failed to create default job ${job.id}: ${err}`);
-      }
+      const getAvailablePersonas = (): string[] => {
+        const skillsDir = join(projectRoot, "skills");
+        return readdirSync(skillsDir, { withFileTypes: true })
+          .filter((d) => d.isDirectory() && d.name !== "global")
+          .map((d) => d.name);
+      };
+
+      telegramBot.onMessage((userId, text) => {
+        (async () => {
+        // Handle slash commands
+        if (text.startsWith("/persona ")) {
+          const arg = text.slice("/persona ".length).trim();
+          if (arg === "list") {
+            const personas = getAvailablePersonas();
+            const current = senderPersonas.get(userId) || persona;
+            await telegramBot!.sendText(
+              `*Available personas:*\n${personas.map((p) => `${p === current ? "→ " : "  "}${p}`).join("\n")}`,
+            );
+            return;
+          }
+          const available = getAvailablePersonas();
+          if (!available.includes(arg)) {
+            await telegramBot!.sendText(`Unknown persona: *${arg}*\nAvailable: ${available.join(", ")}`);
+            return;
+          }
+          senderPersonas.set(userId, arg);
+          await telegramBot!.sendText(`Switched to persona: *${arg}*`);
+          log(`[telegram] User ${userId} switched to persona: ${arg}`);
+          return;
+        }
+
+        if (text === "/status") {
+          const activePersona = senderPersonas.get(userId) || persona;
+          const jobs = jobStore.list().filter((j) => j.persona === activePersona);
+          const running = jobs.filter((j) => j.enabled).length;
+          await telegramBot!.sendText(
+            `*Daemon status:* running\n*Persona:* ${activePersona}\n*Jobs:* ${running} active / ${jobs.length} total`,
+          );
+          return;
+        }
+
+        if (text === "/help") {
+          await telegramBot!.sendText(
+            `*Commands:*\n` +
+            `/persona <name> — switch persona\n` +
+            `/persona list — list personas\n` +
+            `/status — daemon status\n` +
+            `/help — this message\n\n` +
+            `Or just @mention me with a task.`,
+          );
+          return;
+        }
+
+        // Route to persona agent
+        const activePersona = senderPersonas.get(userId) || persona;
+        const pa = getOrCreatePersonaAgent(activePersona, jobStore, projectRoot, provider, modelId);
+
+        if (pa.busy) {
+          await telegramBot!.sendText(`⏳ Agent is busy with another task. Please wait.`);
+          return;
+        }
+
+        pa.busy = true;
+        log(`[telegram] Routing to ${activePersona} agent: ${text.slice(0, 100)}`);
+
+        let responseText = "";
+        const unsubscribe = pa.agent.subscribe((event: AgentEvent) => {
+          if (event.type === "message_update" && event.assistantMessageEvent.type === "text_delta") {
+            responseText += event.assistantMessageEvent.delta;
+          }
+          if (event.type === "message_end") {
+            appendPersonaSessionMessage(`telegram-${activePersona}`, event.message as Message);
+          }
+        });
+
+        try {
+          const userMessage: Message = {
+            role: "user",
+            content: [{ type: "text", text }],
+            timestamp: Date.now(),
+          };
+
+          // Timeout guard — abort if agent doesn't respond within 3 minutes
+          const AGENT_TIMEOUT_MS = 3 * 60 * 1000;
+          const timeout = new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error("Agent timed out after 3 minutes")), AGENT_TIMEOUT_MS),
+          );
+          await Promise.race([
+            (async () => { await pa.agent.prompt(userMessage); await pa.agent.waitForIdle(); })(),
+            timeout,
+          ]);
+
+          if (responseText) {
+            const prefixed = `*[${activePersona}]* ${responseText}`;
+            await telegramBot!.sendText(prefixed);
+
+            // Send any screenshots from browser tools
+            const messages = pa.agent.state.messages;
+            const lastMessages = messages.slice(-10);
+            for (const msg of lastMessages) {
+              if ((msg as any).role === "toolResult") {
+                const content = (msg as any).content;
+                if (Array.isArray(content)) {
+                  const img = content.find((c: any) => c.type === "image");
+                  if (img?.data) {
+                    const buf = Buffer.from(img.data, "base64");
+                    await telegramBot!.sendImage(buf, "Browser screenshot");
+                  }
+                }
+              }
+            }
+          }
+
+          // Compact if needed
+          const model = resolveModel(provider, modelId);
+          if (shouldCompact(pa.lastInputTokens + pa.lastCacheReadTokens, model.contextWindow)) {
+            log(`[telegram][${activePersona}] Compacting session...`);
+            const result = await compact(pa.agent, model, (msg) => log(`[telegram][${activePersona}] ${msg}`));
+            if (result) {
+              savePersonaSession(`telegram-${activePersona}`, pa.agent.state.messages as Message[]);
+            }
+          }
+        } catch (err) {
+          const errMsg = err instanceof Error ? err.message : String(err);
+          log(`[telegram] Error: ${errMsg}`);
+          try { await telegramBot!.sendText(`Error: ${errMsg}`); } catch { /* ignore */ }
+        } finally {
+          unsubscribe();
+          pa.busy = false;
+        }
+        })().catch((err) => {
+          log(`[telegram] Unhandled error in message handler: ${err instanceof Error ? err.message : String(err)}`);
+        });
+      });
+
+      telegramBot.start();
+      log(`Telegram bot started as @${tgConfig.botUsername}`);
     }
-  }
-
-  if (existingForPersona.length === 0 && persona === "job-finder") {
-    log(`No jobs found for persona "${persona}" — seeding default LinkedIn outreach schedule`);
-
-    const jobFinderJobs: CreateJobInput[] = [
-      {
-        id: "linkedin-job-search",
-        persona: "job-finder",
-        prompt: "Search LinkedIn for Senior Software Engineer roles. Use the linkedin-search skill to generate diverse queries covering: 'senior software engineer hiring', 'senior SWE open role', 'hiring backend engineer senior', and company-specific queries for top tech companies. Extract and rank all posts using post-extraction and post-ranking skills. Save posts scoring above 0.3 to ~/.x-lens/linkedin-posts.jsonl.",
-        type: "cron",
-        schedule: "0 14 * * 1-5", // 9 AM ET = 2 PM UTC
-        notify: true,
-      },
-      {
-        id: "linkedin-feed-scan",
-        persona: "job-finder",
-        prompt: "Scan your LinkedIn feed for recent hiring posts. Scroll through the feed and look for posts containing: 'we\\'re hiring', 'join my team', 'open role', 'looking for engineers', 'growing the team'. Extract and rank any relevant posts using post-extraction and post-ranking skills. Focus on Senior Software Engineer or equivalent roles.",
-        type: "cron",
-        schedule: "0 16 * * 1-5", // 11 AM ET = 4 PM UTC
-        notify: true,
-      },
-      {
-        id: "linkedin-outreach",
-        persona: "job-finder",
-        prompt: "Process high-scoring posts and send outreach. Use the linkedin-outreach skill to: read posts scoring >= 0.7 from ~/.x-lens/linkedin-posts.jsonl, check ~/.x-lens/linkedin-outreach.jsonl to skip anyone contacted in the last 30 days, visit each author's profile, draft a casual personalized connection request or message, and send it. Max 10 outreach actions per run. Log all outreach to ~/.x-lens/linkedin-outreach.jsonl.",
-        type: "cron",
-        schedule: "0 18 * * 1-5", // 1 PM ET = 6 PM UTC
-        notify: true,
-      },
-      {
-        id: "outreach-summary",
-        persona: "job-finder",
-        prompt: "Weekly outreach summary. Read ~/.x-lens/linkedin-outreach.jsonl and ~/.x-lens/linkedin-posts.jsonl. Report: total outreach sent this week, breakdown by connection request vs direct message, top companies contacted, total high-scoring posts in pipeline, and any LinkedIn rate limit issues encountered. Check LinkedIn notifications for any responses to previous outreach and report those too.",
-        type: "cron",
-        schedule: "0 22 * * 5", // 5 PM ET Friday = 10 PM UTC
-        notify: true,
-      },
-    ];
-
-    for (const job of jobFinderJobs) {
-      try {
-        jobStore.create(job);
-        log(`  Created default job: ${job.id}`);
-      } catch (err) {
-        logError(`  Failed to create default job ${job.id}: ${err}`);
-      }
-    }
-  }
-
-  if (existingForPersona.length === 0 && persona !== "trader" && persona !== "job-finder") {
-    log(`No jobs found for persona "${persona}". Create jobs via REPL: x-lens --persona ${persona} "your prompt here"`);
   }
 
   const jobs = jobStore.list();
@@ -689,16 +754,16 @@ export async function startDaemon(options: {
           continue;
         }
         const task = cron.schedule(job.schedule, () => {
-          executeJob(job, jobStore, projectRoot, provider, status, modelId);
+          executeJob(job, jobStore, projectRoot, provider, status, modelId, telegramBot);
         });
         cronTasks.push(task);
         log(`Scheduled cron job "${job.id}": ${job.schedule}`);
       } else if (job.type === "interval" && job.interval_minutes) {
         const ms = job.interval_minutes * 60 * 1000;
         // Run immediately on start, then at interval
-        executeJob(job, jobStore, projectRoot, provider, status, modelId);
+        executeJob(job, jobStore, projectRoot, provider, status, modelId, telegramBot);
         const iv = setInterval(() => {
-          executeJob(job, jobStore, projectRoot, provider, status, modelId);
+          executeJob(job, jobStore, projectRoot, provider, status, modelId, telegramBot);
         }, ms);
         intervals.push(iv);
         log(`Scheduled interval job "${job.id}": every ${job.interval_minutes}min`);
@@ -711,7 +776,7 @@ export async function startDaemon(options: {
           while (!ctrl.signal.aborted) {
             const currentJob = jobStore.get(job.id);
             if (!currentJob || !currentJob.enabled) break;
-            await executeJob(currentJob, jobStore, projectRoot, provider, status, modelId);
+            await executeJob(currentJob, jobStore, projectRoot, provider, status, modelId, telegramBot);
             await new Promise((r) => {
               const timeout = setTimeout(r, pauseMs);
               ctrl.signal.addEventListener("abort", () => { clearTimeout(timeout); r(undefined); }, { once: true });
@@ -753,19 +818,15 @@ export async function startDaemon(options: {
     }
 
     try { await status.stop(); } catch { /* ignore */ }
+    if (telegramBot) {
+      try { await telegramBot.stop(); } catch { /* ignore */ }
+    }
     try { unlinkSync(PID_FILE); } catch { /* ignore */ }
     process.exit(0);
   };
 
   process.on("SIGTERM", shutdown);
   process.on("SIGINT", shutdown);
-
-  process.on("uncaughtException", (err) => {
-    logError(`Uncaught exception: ${err.message}`);
-  });
-  process.on("unhandledRejection", (reason) => {
-    logError(`Unhandled rejection: ${reason}`);
-  });
 
   log("Daemon running. Press Ctrl+C to stop.");
   notify("x-lens Daemon", "Daemon started and monitoring.");
