@@ -1,0 +1,242 @@
+{
+  "simulation_id": "nvidia-earnings-q1-2026",
+  "scenario": "NVIDIA reports Q1 2026 earnings beating estimates by 15%, but issues cautious guidance citing export restrictions to China. Stock drops 8% after-hours despite the beat. Market debates whether this is a buying opportunity or the start of a semiconductor downturn.",
+  "time_config": {
+    "total_simulation_hours": 48,
+    "minutes_per_round": 30,
+    "agents_per_hour_min": 5,
+    "agents_per_hour_max": 20,
+    "peak_hours": [
+      9,
+      10,
+      11,
+      14,
+      15,
+      20,
+      21,
+      22
+    ],
+    "off_peak_hours": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5
+    ],
+    "peak_activity_multiplier": 1.5,
+    "off_peak_activity_multiplier": 0.3
+  },
+  "event_config": {
+    "hot_topics": [
+      "NVIDIA Q1 2026 Earnings Beat",
+      "U.S. China AI Chip Export Restrictions",
+      "NVDA After-Hours 8% Stock Drop",
+      "Semiconductor Sector Downturn Fears"
+    ],
+    "narrative_direction": "Initial after-hours bearish sentiment from NVIDIA's 8% stock drop evolves into a mixed market debate, with competing narratives framing the dip as a buying opportunity or the start of a semiconductor downturn.",
+    "initial_posts": [
+      {
+        "poster_agent_id": 3,
+        "content": "BREAKING: NVIDIA reported Q1 2026 earnings that beat analyst estimates by 15%, but issued cautious full-year guidance citing escalating U.S. export restrictions on advanced AI chips to China; shares dropped 8% in after-hours trading following the release."
+      },
+      {
+        "poster_agent_id": 4,
+        "content": "NVDA dip buying time! The 8% after-hours drop is an overreaction—China export restrictions are temporary, and NVIDIA's AI leadership is unshakable. Load up on the dip right now."
+      },
+      {
+        "poster_agent_id": 2,
+        "content": "NVIDIA's earnings beat is a bright spot, but their China guidance is a major red flag. These export curbs will hit top-line growth this year, and this sell-off may not be over yet."
+      },
+      {
+        "poster_agent_id": 1,
+        "content": "NVDA is crashing hard and it's only the start! China bans will kill their biggest growth market—short this stock before it tanks 30% more. Don't be a bagholder."
+      }
+    ]
+  },
+  "agent_configs": [
+    {
+      "agent_id": 0,
+      "entity_name": "James Halpert",
+      "active_hours": [
+        9,
+        10,
+        11,
+        12,
+        13,
+        14,
+        15,
+        16,
+        17,
+        18,
+        19,
+        20,
+        21
+      ],
+      "activity_level": 0.6
+    },
+    {
+      "agent_id": 1,
+      "entity_name": "Dave Miller",
+      "active_hours": [
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13,
+        14,
+        15,
+        16,
+        17,
+        18,
+        19,
+        20,
+        21,
+        22,
+        23
+      ],
+      "activity_level": 0.9
+    },
+    {
+      "agent_id": 2,
+      "entity_name": "Sam Torres",
+      "active_hours": [
+        9,
+        10,
+        11,
+        12,
+        13,
+        14,
+        15,
+        16,
+        17,
+        18,
+        19,
+        20,
+        21
+      ],
+      "activity_level": 0.7
+    },
+    {
+      "agent_id": 3,
+      "entity_name": "Lisa Chen",
+      "active_hours": [
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13,
+        14,
+        15,
+        16,
+        17,
+        18,
+        19,
+        20,
+        21,
+        22,
+        23
+      ],
+      "activity_level": 0.8
+    },
+    {
+      "agent_id": 4,
+      "entity_name": "Mike Ross",
+      "active_hours": [
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13,
+        14,
+        15,
+        16,
+        17,
+        18,
+        19,
+        20,
+        21,
+        22,
+        23
+      ],
+      "activity_level": 0.9
+    },
+    {
+      "agent_id": 5,
+      "entity_name": "Jake Wilson",
+      "active_hours": [
+        10,
+        11,
+        12,
+        13,
+        14,
+        15,
+        16,
+        17
+      ],
+      "activity_level": 0.4
+    },
+    {
+      "agent_id": 6,
+      "entity_name": "Tom Harris",
+      "active_hours": [
+        9,
+        10,
+        11,
+        12,
+        13,
+        14,
+        15,
+        16,
+        17,
+        18,
+        19,
+        20,
+        21
+      ],
+      "activity_level": 0.7
+    },
+    {
+      "agent_id": 7,
+      "entity_name": "Mia Thompson",
+      "active_hours": [
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13,
+        14,
+        15,
+        16,
+        17,
+        18,
+        19,
+        20,
+        21,
+        22,
+        23
+      ],
+      "activity_level": 0.8
+    }
+  ],
+  "platform_config": {
+    "twitter": {
+      "recency_weight": 0.4,
+      "popularity_weight": 0.3,
+      "relevance_weight": 0.3
+    },
+    "reddit": {
+      "recency_weight": 0.3,
+      "popularity_weight": 0.4,
+      "relevance_weight": 0.3
+    }
+  }
+}

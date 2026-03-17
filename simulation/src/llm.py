@@ -20,7 +20,13 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
+# Load simulation/.env first, then project root .env (won't override existing)
 load_dotenv(Path(__file__).parent.parent / ".env")
+load_dotenv(Path(__file__).parent.parent.parent / ".env")
+
+# Normalize AWS_REGION → AWS_REGION_NAME (LiteLLM expects AWS_REGION_NAME)
+if os.getenv("AWS_REGION") and not os.getenv("AWS_REGION_NAME"):
+    os.environ["AWS_REGION_NAME"] = os.environ["AWS_REGION"]
 
 
 def get_model() -> str:
@@ -36,23 +42,33 @@ def completion(messages: list[dict], temperature: float = 0.7,
     """
     import litellm
 
-    # Map our env vars to what litellm/providers expect
-    api_key = os.getenv("LLM_API_KEY", os.getenv("OPENAI_API_KEY"))
-    base_url = os.getenv("LLM_BASE_URL", os.getenv("OPENAI_BASE_URL"))
     model = get_model()
+    base_url = os.getenv("LLM_BASE_URL", os.getenv("OPENAI_BASE_URL"))
+    api_key = os.getenv("LLM_API_KEY") or os.getenv("OPENROUTER_API_KEY") or os.getenv("OPENAI_API_KEY")
+
+    # Auto-detect OpenRouter from key if no base URL set
+    if os.getenv("OPENROUTER_API_KEY") and not base_url:
+        base_url = "https://openrouter.ai/api/v1"
+
+    # If routing through OpenRouter or any custom base_url, use openai/ prefix
+    # so litellm treats it as OpenAI-compatible instead of native Anthropic
+    is_custom_proxy = base_url and "openrouter" in base_url
+    is_bedrock = model.startswith("bedrock/")
+
+    if is_custom_proxy:
+        # OpenRouter is OpenAI-compatible — force openai provider
+        litellm_model = f"openai/{model}" if not model.startswith("openai/") else model
+    else:
+        litellm_model = model
 
     kwargs: dict = {
-        "model": model,
+        "model": litellm_model,
         "messages": messages,
         "temperature": temperature,
     }
 
-    # Only pass api_key/base_url for OpenAI-compatible providers
-    # Bedrock and Anthropic use their own env vars (AWS_*, ANTHROPIC_API_KEY)
-    is_bedrock = model.startswith("bedrock/")
-    is_anthropic = model.startswith("anthropic/")
-
-    if not is_bedrock and not is_anthropic:
+    # Bedrock uses AWS env vars directly, no api_key/base_url needed
+    if not is_bedrock:
         if api_key:
             kwargs["api_key"] = api_key
         if base_url:
@@ -83,9 +99,15 @@ def get_camel_model():
         )
 
     # For OpenAI-compatible (OpenAI, Ollama, OpenRouter, etc.)
+    api_key = os.getenv("LLM_API_KEY") or os.getenv("OPENROUTER_API_KEY") or os.getenv("OPENAI_API_KEY") or "ollama"
+    base_url = os.getenv("LLM_BASE_URL") or os.getenv("OPENAI_BASE_URL")
+    if os.getenv("OPENROUTER_API_KEY") and not os.getenv("LLM_BASE_URL"):
+        base_url = "https://openrouter.ai/api/v1"
+    base_url = base_url or "http://localhost:11434/v1"
+
     return ModelFactory.create(
         model_platform=ModelPlatformType.DEFAULT,
         model_type=model_name.removeprefix("openai/"),
-        url=os.getenv("LLM_BASE_URL", os.getenv("OPENAI_BASE_URL", "http://localhost:11434/v1")),
-        api_key=os.getenv("LLM_API_KEY", os.getenv("OPENAI_API_KEY", "ollama")),
+        url=base_url,
+        api_key=api_key,
     )

@@ -8,9 +8,6 @@ triggers: [simulate, simulation, sentiment simulation, swarm, crowd behavior, op
 
 You are using the x-lens social simulation engine — a multi-agent system that simulates how information spreads across Twitter and Reddit through autonomous agents with distinct personalities and behavioral biases. This is your crystal ball for predicting crowd sentiment shifts before they happen.
 
-**Simulation package:** `simulation/` (Python, uses OASIS framework)
-**Virtual env:** `simulation/.venv`
-
 ### When to Use This Skill
 
 - "What happens if [company] announces [event]?" — counterfactual analysis
@@ -19,92 +16,56 @@ You are using the x-lens social simulation engine — a multi-agent system that 
 - "What's the crowd sentiment around [topic]?" — social dynamics analysis
 - Pre-earnings scenario planning, Fed decision impact modeling, sector rotation narratives
 
-### Step 1: Create Simulation Directory
+### Running a Simulation
+
+**Use the all-in-one script.** It handles venv activation, all pipeline steps, and the dashboard. Run it with a SINGLE shell command:
 
 ```bash
-SIM_ID="sim_$(date +%s)"
-SIM_DIR="$HOME/.x-lens/simulations/$SIM_ID"
-mkdir -p "$SIM_DIR"
+/Users/sayantan/Documents/Workspace/personal-assist/x-lens/simulation/simulate.sh \
+  --scenario "<detailed scenario description including bullish AND bearish arguments>" \
+  --count 10 \
+  --max-rounds 30 \
+  --platform twitter \
+  --port 5055
 ```
 
-### Step 2: Generate Agent Profiles
+**CRITICAL RULES:**
+- Use ONLY `simulate.sh` — do NOT run `python3 -m src.*` commands yourself
+- Do NOT activate the venv yourself — the script handles it
+- Do NOT create simulation directories yourself — the script handles it
+- The script returns IMMEDIATELY — the pipeline runs in the background
+- Tell the user to watch the dashboard for live progress
+- Do NOT fabricate results. If something fails, check the log file.
 
-Generate diverse market participants from the scenario:
+**What it does (automatically, in the background):**
+1. Creates a sim directory in `~/.x-lens/simulations/`
+2. Generates diverse agent profiles (bulls, bears, neutrals, influencers, analysts, degens)
+3. Generates simulation config with seed posts and timing
+4. Starts the live dashboard at `http://localhost:<port>`
+5. Runs the multi-agent simulation
+6. Generates the analysis report
+7. Saves report to `$SIM_DIR/report.md`
 
-```bash
-cd simulation && source .venv/bin/activate && python -m src.generate_profiles \
-  --scenario "<scenario description>" \
-  --count 20 \
-  --output "$SIM_DIR/profiles.json"
-```
+**After launching**, tell the user:
+- Dashboard: `http://localhost:<port>` (shows live pipeline progress)
+- Log: `tail -f $SIM_DIR/pipeline.log`
+- Report will appear at `$SIM_DIR/report.md` when done
+- Pipeline takes 5-30 minutes depending on agent count
 
-The LLM generates a diverse cast — bulls, bears, neutrals, influencers, retail traders, institutional PMs, analysts, and degens — each with unique backstories and biases.
+### Options
 
-### Step 3: Generate Simulation Config
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--scenario` | (required) | The market scenario to simulate |
+| `--count` | 10 | Number of agents |
+| `--max-rounds` | 30 | Simulation rounds (1 round ≈ 30-60 min simulated time) |
+| `--platform` | twitter | `twitter`, `reddit`, or `parallel` (both) |
+| `--port` | 5055 | Dashboard port |
+| `--sim-id` | auto | Custom simulation ID |
 
-```bash
-cd simulation && source .venv/bin/activate && python -m src.generate_config \
-  --profiles "$SIM_DIR/profiles.json" \
-  --scenario "<scenario description>" \
-  --sim-id "$SIM_ID" \
-  --output "$SIM_DIR/simulation_config.json"
-```
+### After the Simulation
 
-### Step 4: Run the Simulation
-
-```bash
-cd simulation && source .venv/bin/activate && python -m src.run_simulation \
-  --config "$SIM_DIR/simulation_config.json" \
-  --profiles "$SIM_DIR/profiles.json" \
-  --platform parallel \
-  --max-rounds 72 &
-```
-
-Monitor completion by checking for the marker:
-
-```bash
-# Poll until simulation completes
-while ! grep -q "simulation_complete" "$SIM_DIR/actions.jsonl" 2>/dev/null; do
-  sleep 10
-done
-echo "Simulation complete"
-```
-
-### Step 5: Generate Report
-
-```bash
-cd simulation && source .venv/bin/activate && python -m src.generate_report \
-  --sim-dir "$SIM_DIR" \
-  --scenario "<scenario description>"
-```
-
-Read the report:
-
-```bash
-cat "$SIM_DIR/report.md"
-```
-
-### Step 6: Interview Agents (Optional — Counterfactual Analysis)
-
-Interview specific agents while the simulation process is still running:
-
-```bash
-# Interview a specific agent
-cd simulation && source .venv/bin/activate && python -m src.interview \
-  --sim-dir "$SIM_DIR" \
-  --agent-id 5 \
-  --prompt "Would you buy, hold, or sell right now? Why?"
-
-# Interview ALL agents
-cd simulation && source .venv/bin/activate && python -m src.interview \
-  --sim-dir "$SIM_DIR" \
-  --all \
-  --prompt "What would change your mind about this trade?"
-```
-
-### Step 7: Extract Trading Signal
-
-After reading the report and interview responses, synthesize into an actionable signal:
+The script prints the report. Read it and synthesize into an actionable trading signal:
 
 1. **Sentiment Direction**: Is the crowd turning bullish, bearish, or split?
 2. **Propagation Speed**: How fast is the narrative spreading? Fast = already priced in. Slow = potential alpha.
@@ -112,6 +73,17 @@ After reading the report and interview responses, synthesize into an actionable 
 4. **Influential Agents**: Which simulated participants drove the narrative?
 5. **Counter-narratives**: Did any agents push back? What were their arguments?
 6. **Timeline**: When does sentiment peak/trough in the simulation?
+
+### Interview Agents (Optional — Counterfactual Analysis)
+
+Interview agents WHILE the simulation is still running (the script keeps the process alive for 600s after simulation ends):
+
+```bash
+cd /Users/sayantan/Documents/Workspace/personal-assist/x-lens/simulation && source .venv/bin/activate && python3 -m src.interview \
+  --sim-dir "$HOME/.x-lens/simulations/<SIM_ID>" \
+  --all \
+  --prompt "What would change your mind about this trade?"
+```
 
 ### Output Format
 
@@ -142,15 +114,13 @@ After reading the report and interview responses, synthesize into an actionable 
 - If bearish: [hedge, exit, short level]
 - Timing: [when does sentiment peak/trough in simulation]
 - Risk: [what could invalidate]
-
-### Counterfactual (if interviews run)
-- "What if [X]?" — [agent response summary]
 ```
 
 ### Important Notes
 
-- Simulations are compute-intensive — a single run can take 5-30 minutes depending on agent count and rounds
-- Seed content quality directly impacts simulation quality — more context = better agent behavior
+- **ALWAYS use `simulate.sh`** — it handles venv, directories, and all steps
+- Simulations take 5-30 minutes — do not interrupt
 - For market events, always include the contrarian view in the scenario description to avoid one-sided simulations
-- The simulation requires an LLM API (configured via `simulation/.env`) — ensure `LLM_API_KEY`, `LLM_BASE_URL`, and `LLM_MODEL_NAME` are set
-- Use `--max-rounds` to limit simulation length for faster results during testing
+- The simulation requires an LLM API (configured via `simulation/.env`)
+- Dashboard goes live at step 3 — tell the user to open it while simulation runs
+- Use `--platform twitter` for faster runs, `--platform parallel` for both Twitter+Reddit

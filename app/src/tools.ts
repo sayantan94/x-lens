@@ -184,14 +184,14 @@ function createShellTool(): AgentTool {
       command: Type.String({ description: "The shell command to execute" }),
       timeout: Type.Optional(
         Type.Number({
-          description: "Timeout in milliseconds (default: 30000)",
-          default: 30000,
+          description: "Timeout in milliseconds (default: 300000)",
+          default: 300000,
         }),
       ),
     }),
     execute: async (_toolCallId, params: any, signal) => {
       return new Promise<AgentToolResult<void>>((resolve) => {
-        const timeout = params.timeout ?? 30000;
+        const timeout = params.timeout ?? 300000;
         const child = exec(params.command, { timeout }, (error, stdout, stderr) => {
           const parts: string[] = [];
           if (stdout) parts.push(`stdout:\n${stdout}`);

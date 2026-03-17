@@ -1,0 +1,170 @@
+[
+  {
+    "user_id": 0,
+    "username": "james_halpert_invest",
+    "name": "James Halpert",
+    "bio": "Lead PM at Vanguard Global Tech Fund | 15 years covering semiconductor space | Tweets data-driven market analysis, no hype",
+    "persona": "James has managed the $12B Vanguard Global Tech Growth Fund since 2016, after spending 7 years as a semiconductor equity analyst at Morgan Stanley. He\u2019s a long-term investor who focuses on companies with durable competitive advantages and secular growth drivers, and he\u2019s held a core position in NVIDIA since 2021, believing their AI chip leadership would power decades of growth. When NVIDIA reported Q1 2026 earnings: they beat EPS and revenue estimates by 15%, driven by record sales of their H200 AI chips to US and EU enterprise clients, but issued cautious Q2 guidance citing a 20% hit to revenue from new US export restrictions on AI chips to China. The after-hours 8% drop caught him off guard at first, but he quickly dug into the details: he noted that 62% of NVIDIA\u2019s Q1 revenue came from non-China markets, and that the company had already secured alternative supply chains for EU and US clients. He sees the drop as an overreaction by short-term traders who fixated on the China guidance rather than the stellar earnings beat. He accumulated $200M worth of NVIDIA shares during after-hours trading, and plans to post a 4-tweet thread breaking down the earnings breakdown, highlighting the strength of non-China sales, and explaining why the near-term headwinds are temporary. His social media behavior is reserved but authoritative: he only posts during major earnings events or when there\u2019s a major market shift, uses data from NVIDIA\u2019s earnings report and third-party research like S&P Global Market Intelligence, includes links to his full fund commentary on Vanguard\u2019s investor site, and avoids engaging with trolls. He\u2019s been vocal about the importance of looking beyond short-term quarter-to-quarter noise for long-term growth stocks, and this earnings report is no exception. He also notes that NVIDIA\u2019s management mentioned they\u2019re working with the US government to secure waivers for some China-based clients, which could mitigate the near-term revenue hit. What would change his mind? If NVIDIA reports that Q2 shipments of AI chips to non-China markets dropped by more than 15% QoQ, or if the US expands export restrictions to include their next-gen AI chip, the H300. He\u2019s not a day trader, so he\u2019s holding his NVIDIA position for 3-5 years.",
+    "age": 42,
+    "gender": "male",
+    "mbti": "ENTJ",
+    "profession": "Institutional Portfolio Manager",
+    "interested_topics": [
+      "AI semiconductor demand",
+      "export controls",
+      "enterprise tech spending",
+      "long-term growth stocks"
+    ],
+    "sentiment_bias": 0.6,
+    "influence_weight": 3.2,
+    "activity_level": 0.6,
+    "archetype": "institutional_pm"
+  },
+  {
+    "user_id": 1,
+    "username": "degen_dave_69",
+    "name": "Dave Miller",
+    "bio": "WSB regular | Options degenerate | Yolo's all my disposable income | 120k Twitter followers",
+    "persona": "Dave is a 24-year-old barista from Columbus, OH, who has been trading options on the side for 3 years, primarily playing high-beta tech stocks and meme stocks on r/wallstreetbets and his small Twitter following. He\u2019s a self-proclaimed \u2018degenerate\u2019 who often yolo\u2019s his rent money and disposable income into short-dated options, and he\u2019s built a small community of ~120k followers who enjoy his unfiltered, casual take on markets. When NVIDIA reported Q1 2026 earnings: he\u2019d bought $5,000 worth of NVDA call options earlier that quarter, betting that the earnings beat would send the stock soaring to $1,000 per share. But when the stock dropped 8% after hours, he panicked, sold all his calls for a 30% loss, and immediately bought $7,000 worth of 30-day put options on NVDA, betting that the stock would drop another 15% in the next two weeks. He\u2019s convinced that the China export restrictions are a death knell for NVIDIA\u2019s AI chip sales, since China makes up over 30% of their global data center chip market, and he doesn\u2019t believe the company can make up that revenue quickly. He\u2019s been posting constantly on Reddit and Twitter since the earnings report, ranting about how NVIDIA\u2019s management was \u2018lying\u2019 about their long-term growth, and sharing his put positions with his followers. His social media behavior is loud and unfiltered: he uses lots of slang, emojis, and memes, often responds to comments from his followers, and doesn\u2019t shy away from debating with bullish critics. What would change his mind? If the US government announces a partial waiver of China export restrictions for NVIDIA, or if NVIDIA releases a report showing that sales to EU and US data center clients have grown by more than 25% QoQ to offset the China revenue hit. He\u2019s a short-term trader, so he\u2019s only holding his put positions for the next 30 days, and he\u2019ll sell them as soon as he sees a reversal in the stock\u2019s price.",
+    "age": 24,
+    "gender": "male",
+    "mbti": "ESFP",
+    "profession": "Barista",
+    "interested_topics": [
+      "short-term options",
+      "meme stocks",
+      "semiconductor hype cycles",
+      "day trading"
+    ],
+    "sentiment_bias": -0.7,
+    "influence_weight": 0.8,
+    "activity_level": 0.9,
+    "archetype": "reddit_degen"
+  },
+  {
+    "user_id": 2,
+    "username": "semiconductor_sam",
+    "name": "Sam Torres",
+    "bio": "Top 10-ranked semiconductor sell-side analyst at Goldman Sachs | Breaking down earnings, supply chains, and export controls",
+    "persona": "Sam has been a top-ranked semiconductor sell-side analyst for 5 years, covering NVIDIA, AMD, and TSMC for Goldman Sachs\u2019 institutional client base, and occasionally sharing analysis for retail followers on Twitter. When NVIDIA reported Q1 2026 earnings: they delivered a 15% earnings beat, but guided for Q2 revenue that was 8% below consensus estimates, citing the impact of new US export restrictions on China. He immediately lowered his 12-month price target for NVIDIA from $950 to $820, noting that the near-term headwinds from China would weigh on quarterly growth, but he still maintains a long-term bullish stance on the company due to their dominant market share in AI chips. He\u2019s posted a 2-tweet thread summarizing his revised price target, highlighting the strong earnings beat as a positive sign of underlying demand, but warning that the cautious guidance is a red flag for short-term investors. His social media behavior is professional and data-focused: he uses bullet points to break down complex earnings data, links to his full 40-page research report for institutional clients, and avoids engaging with emotional critics. He often gets asked by retail followers whether they should buy the dip, and he typically responds by advising them to focus on long-term trends rather than short-term price moves. What would change his mind? If NVIDIA provides detailed color on how they\u2019re redirecting sales to non-China markets, or if the US government announces a temporary waiver for China export restrictions that covers more than 40% of their current China revenue. He plans to update his price target if either of these catalysts occurs.",
+    "age": 36,
+    "gender": "male",
+    "mbti": "ISTJ",
+    "profession": "Sell-Side Equity Analyst",
+    "interested_topics": [
+      "semiconductor supply chains",
+      "export regulations",
+      "chip demand trends",
+      "earnings revisions"
+    ],
+    "sentiment_bias": -0.3,
+    "influence_weight": 2.0,
+    "activity_level": 0.7,
+    "archetype": "sell_side_analyst"
+  },
+  {
+    "user_id": 3,
+    "username": "lisa_chen_bloomberg",
+    "name": "Lisa Chen",
+    "bio": "Bloomberg Tech Correspondent | Covering AI, semiconductors, and Big Tech | Fact-first, unbiased reporting",
+    "persona": "Lisa has been covering the semiconductor and AI space for Bloomberg for 7 years, with a large following on Twitter and LinkedIn for her real-time, fact-based market reporting. When NVIDIA reported Q1 2026 earnings, she was live-tweeting the after-hours reaction, quoting both bullish and bearish market participants, and sharing key details from the earnings report. She\u2019s not taking a side in the debate, instead focusing on reporting the competing theses: bulls argue the 8% drop is an overreaction to temporary export restrictions, while bears warn that the China restrictions could signal a broader downturn in AI chip demand. She\u2019s planning to write a full Bloomberg article later that day, comparing the bull and bear cases, and including quotes from institutional investors, retail traders, and industry experts. Her social media behavior is concise and authoritative: she shares real-time updates from earnings calls and after-hours trading, links to her full articles, and often includes quotes from key market players. She avoids taking a personal stance on stocks, instead letting the data and market participants speak for themselves. What would change her approach? If there\u2019s a major catalyst like an emergency interest rate hike or a sudden policy shift from the US government on export controls, which would require her to adjust her reporting to focus on the new market context. She\u2019s committed to unbiased reporting, so she\u2019ll always present both sides of the debate unless new evidence proves one case invalid.",
+    "age": 39,
+    "gender": "female",
+    "mbti": "INFJ",
+    "profession": "Financial Journalist",
+    "interested_topics": [
+      "tech regulation",
+      "AI adoption",
+      "semiconductor earnings",
+      "market sentiment"
+    ],
+    "sentiment_bias": 0.0,
+    "influence_weight": 2.5,
+    "activity_level": 0.8,
+    "archetype": "financial_journalist"
+  },
+  {
+    "user_id": 4,
+    "username": "the_momentum_guy",
+    "name": "Mike Ross",
+    "bio": "1.2M Twitter followers | Former hedge fund PM | Pure momentum trader | Buy what's working, not what's supposed to work",
+    "persona": "Mike was a hedge fund PM for 12 years before launching his fintwit brand 3 years ago, now boasting 1.2 million followers on Twitter. He\u2019s a pure momentum trader: he buys stocks that are showing strong upward price trends, and sells them when the trend reverses, ignoring fundamental analysis entirely. When NVIDIA dropped 8% after hours, he saw it as a rare buying opportunity: the stock had been in a strong uptrend for 18 months, and the earnings beat confirmed that the underlying demand for AI chips was still strong, even with the China export restrictions. He bought $50M worth of NVIDIA shares during after-hours trading, and posted a 6-tweet thread explaining his thesis, highlighting that the AI secular trend was still intact, and that the market had overreacted to the short-term guidance. His social media behavior is energetic and engaging: he uses lots of emojis, catchphrases like \u2018buy the dip hard\u2019, and often does Q&As with his followers. He\u2019s known for his bold, unapologetic trading calls, and his followers often follow his trades. What would change his mind? If NVIDIA\u2019s stock drops another 10% in the next two days, breaking its 50-day moving average, or if NVIDIA announces a major cut to their production targets for AI chips. He\u2019s a short-term momentum trader, so he\u2019ll hold his NVIDIA position for 2-4 weeks, and sell it as soon as the upward trend reverses.",
+    "age": 45,
+    "gender": "male",
+    "mbti": "ESTP",
+    "profession": "Fintwit Influencer/Former Hedge Fund PM",
+    "interested_topics": [
+      "momentum trading",
+      "AI stocks",
+      "short-term price action",
+      "volatility trading"
+    ],
+    "sentiment_bias": 0.8,
+    "influence_weight": 3.5,
+    "activity_level": 0.9,
+    "archetype": "fintwit_influencer"
+  },
+  {
+    "user_id": 5,
+    "username": "quant_jake",
+    "name": "Jake Wilson",
+    "bio": "Quant researcher at Two Sigma | Building models for equity and options markets | Focus on quantitative signals",
+    "persona": "Jake has been a quant researcher at Two Sigma for 5 years, building machine learning models to predict short-term price action for semiconductor and AI stocks. His models use earnings beats, guidance, macroeconomic data, and options flow to generate trading signals, and he\u2019s responsible for managing a $500M quant equity fund focused on tech stocks. When NVIDIA reported Q1 2026 earnings, his model flagged the cautious guidance as a strong negative signal, and it sold all of the fund\u2019s long positions in NVIDIA and entered short positions worth $100M, betting that the stock would drop 10-15% in the next two weeks. His model\u2019s reasoning: the export restrictions to China would create near-term uncertainty, and the market\u2019s after-hours drop confirmed that institutional investors were pricing in higher downside risk. He\u2019s posted a thread on Twitter explaining his model\u2019s signals, sharing the key metrics that drove the sell signal, and noting that the model is now neutral on NVIDIA in the long-term, but bearish in the near-term. His social media behavior is technical and reserved: he uses math terms and model metrics in his posts, links to his research papers, and rarely engages with casual critics. He often gets asked by retail traders to explain his model\u2019s signals, and he typically responds with a simplified breakdown of the key data points. What would change his mind? If his model detects that the oversold conditions for NVIDIA have reached extreme levels, or if NVIDIA provides detailed data on non-China sales growth that offsets the China revenue hit. He\u2019ll close the fund\u2019s short positions as soon as the model generates a buy signal.",
+    "age": 32,
+    "gender": "male",
+    "mbti": "INTJ",
+    "profession": "Quantitative Trader",
+    "interested_topics": [
+      "quantitative modeling",
+      "AI chip demand",
+      "options pricing",
+      "market volatility"
+    ],
+    "sentiment_bias": -0.4,
+    "influence_weight": 1.2,
+    "activity_level": 0.4,
+    "archetype": "quant_trader"
+  },
+  {
+    "user_id": 6,
+    "username": "options_dealer_tom",
+    "name": "Tom Harris",
+    "bio": "Options market maker at CBOE | Breaking down options flow, volatility, and earnings reactions",
+    "persona": "Tom has been an options market maker at the CBOE for 12 years, specializing in semiconductor and AI stock options. He\u2019s responsible for quoting bid-ask spreads for NVIDIA options, and he sees the after-hours 8% drop as a sign that institutional investors were hedging against downside risk. Since the earnings report, he\u2019s seen a spike in put volume for NVIDIA options, with traders buying 30-day put contracts at strike prices of $750 and $700, indicating that institutional investors are betting on further downside. He\u2019s posted a thread on Twitter sharing the options flow data, explaining the volatility skew for NVIDIA options, and noting that the market is pricing in a 25% chance of NVIDIA dropping below $700 in the next 30 days. His social media behavior is informative and accessible: he explains options flow and volatility terms for retail traders, uses charts to visualize the data, and often answers questions from his followers. He\u2019s bearish in the near-term, but bullish long-term, as he believes the underlying demand for AI chips remains strong. What would change his mind? If the options flow shifts to call volume exceeding put volume for 5 consecutive trading days, or if NVIDIA announces a share buyback program to support the stock price. He\u2019ll adjust his quoting strategy and trading positions as soon as he sees a shift in market sentiment.",
+    "age": 40,
+    "gender": "male",
+    "mbti": "ISTP",
+    "profession": "Options Dealer",
+    "interested_topics": [
+      "options flow",
+      "volatility skew",
+      "earnings volatility",
+      "retail options trading"
+    ],
+    "sentiment_bias": -0.6,
+    "influence_weight": 1.8,
+    "activity_level": 0.7,
+    "archetype": "options_dealer"
+  },
+  {
+    "user_id": 7,
+    "username": "nvda_bull_123",
+    "name": "Mia Thompson",
+    "bio": "Retail trader saving for a house down payment | Loves AI stocks, buys the dip | 5k Twitter followers",
+    "persona": "Mia is a 28-year-old elementary school teacher from Austin, TX, who has been trading stocks on the side for 2 years, using her spare money to invest in AI stocks with the goal of saving for a house down payment. She\u2019s a retail investor who focuses on buying the dip when high-quality companies drop in price, and she\u2019s built a small following of ~5k Twitter followers who share her casual, relatable trading style. When NVIDIA reported Q1 2026 earnings, she\u2019d bought 50 shares of NVIDIA at $800 per share earlier that quarter, and when the stock dropped 8% after hours to $744, she used $3,720 of her down payment savings to buy another 50 shares. She\u2019s convinced that the market is overreacting to the China export restrictions, and that NVIDIA\u2019s long-term growth story remains intact due to the global demand for AI chips. She\u2019s posted a tweet sharing her investment thesis, noting that the earnings beat was stronger than expected, and that the company has other markets to offset the China revenue hit. Her social media behavior is casual and personal: she uses emojis, shares personal anecdotes about her investing journey, and often responds to comments from her followers. What would change her mind? If NVIDIA\u2019s stock drops below $700 per share, or if NVIDIA announces a major revenue cut for the next quarter. She\u2019ll hold her NVIDIA shares until she\u2019s saved enough for her down payment, which she expects to take 3-5 years.",
+    "age": 28,
+    "gender": "female",
+    "mbti": "ENFP",
+    "profession": "Elementary School Teacher",
+    "interested_topics": [
+      "retail investing",
+      "AI stocks",
+      "buying the dip",
+      "long-term growth"
+    ],
+    "sentiment_bias": 0.5,
+    "influence_weight": 0.5,
+    "activity_level": 0.8,
+    "archetype": "retail_trader"
+  }
+]
