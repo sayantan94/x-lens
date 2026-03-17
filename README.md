@@ -447,6 +447,106 @@ Each persona is fully isolated across five dimensions:
 - **Skills loaded** — only the persona's skills (plus global) are loaded. No cross-contamination.
 - **Scheduled jobs** — when the agent calls `schedule_create`, the system auto-fills the persona from runtime context. Jobs are dispatched to the correct persona's agent instance.
 
+## Simulation Engine (Market Sentiment Simulator)
+
+The trader persona includes a multi-agent social simulation engine that models how market narratives propagate across Twitter and Reddit. It uses the [OASIS framework](https://github.com/camel-ai/oasis) with LLM-powered agents.
+
+### Simulation Setup
+
+The simulation engine lives in `simulation/` and has its own Python virtualenv and `.env` file.
+
+```bash
+# 1. Create the virtualenv
+cd simulation
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+
+# 2. Configure simulation/.env
+cp .env.example .env
+# Edit simulation/.env with your LLM credentials (see below)
+```
+
+### Simulation Environment Variables
+
+Create `simulation/.env` with these variables:
+
+```env
+# LLM provider for agent profile generation, config generation, and report generation
+# Uses LiteLLM — supports OpenAI, Anthropic, Bedrock, OpenRouter, Ollama, etc.
+
+# Option A: OpenRouter (recommended — access to many models)
+LLM_MODEL_NAME=bytedance-seed/seed-2.0-mini
+LLM_BASE_URL=https://openrouter.ai/api/v1
+LLM_API_KEY=sk-or-...
+
+# Option B: OpenAI
+# LLM_MODEL_NAME=gpt-4o-mini
+# LLM_API_KEY=sk-...
+
+# Option C: Anthropic
+# LLM_MODEL_NAME=anthropic/claude-haiku-4-5-20251001
+# ANTHROPIC_API_KEY=sk-ant-...
+
+# Option D: AWS Bedrock
+# LLM_MODEL_NAME=bedrock/anthropic.claude-haiku-4-5-20251001
+# AWS_ACCESS_KEY_ID=AKIA...
+# AWS_SECRET_ACCESS_KEY=...
+# AWS_REGION=us-east-1
+
+# Option E: Ollama (local, free)
+# LLM_MODEL_NAME=ollama/llama3
+# LLM_BASE_URL=http://localhost:11434/v1
+```
+
+The simulation also reads from the root `.env` as a fallback, so if you already have `OPENROUTER_API_KEY` set in the root `.env`, you only need `LLM_MODEL_NAME` and `LLM_BASE_URL` in `simulation/.env`.
+
+### Skill Absolute Paths
+
+The simulation skill (`skills/trader/market-sentiment-simulator/skill.md`) contains **hardcoded absolute paths** to the simulation directory and virtualenv. If you clone the repo to a different location, update these paths in the skill file:
+
+```
+Simulation package: /your/path/to/x-lens/simulation
+```
+
+Also update the `simulate.sh` script path in the skill file accordingly. The script itself resolves paths relative to its own location, so it doesn't need editing.
+
+### Running a Simulation
+
+**Via x-lens CLI (end-to-end):**
+
+```bash
+x-lens --persona trader --provider openrouter \
+  "Search for latest NVIDIA news, then run a market sentiment simulation"
+```
+
+The agent will search for news, read the skill instructions, and call `simulate.sh` which handles everything.
+
+**Via simulate.sh directly:**
+
+```bash
+./simulation/simulate.sh \
+  --scenario "NVIDIA reports Q1 earnings beating estimates by 15%, but issues cautious guidance on China export restrictions. Stock drops 8% after hours." \
+  --count 10 \
+  --max-rounds 30 \
+  --platform twitter \
+  --port 5055
+```
+
+**Dashboard:** Opens at `http://localhost:5055` showing live pipeline progress, agent feed, and the generated report.
+
+### Simulation Output
+
+Simulations are saved to `~/.x-lens/simulations/<sim_id>/`:
+
+| File | Description |
+|------|-------------|
+| `profiles.json` | Generated agent personas with sentiment biases |
+| `simulation_config.json` | Timing, seed posts, hot topics |
+| `actions.jsonl` | Every agent action (posts, likes, reposts, follows) |
+| `twitter_simulation.db` | Full OASIS SQLite database |
+| `report.md` | LLM-generated analysis report |
+
 ## Job-Finder Persona
 
 The `job-finder` persona searches LinkedIn for hiring posts and saves ranked results.
@@ -504,6 +604,7 @@ x-lens stores persistent data in `~/.x-lens/`:
 | Browser profiles | `~/.x-lens/browser-profiles/<persona>/` | Per-persona Chromium profiles — cookies, auth, localStorage isolated per persona. |
 | OI cache | `~/.x-lens/oi-cache/` | Cached open interest data for day-over-day delta calculations. |
 | LinkedIn posts | `~/.x-lens/linkedin-posts.jsonl` | Job-finder results — one JSON object per line with author, company, text, URL, relevance score, and ranking reason. |
+| Simulations | `~/.x-lens/simulations/<sim_id>/` | Simulation outputs — profiles, config, actions, database, and report. |
 
 The agent can read and write its own memory during a session. It will remember things like your preferences, frequently used sites, and useful context across conversations.
 
@@ -571,6 +672,11 @@ x-lens/
 │   ├── trader/      # Trading & market analysis skills
 │   ├── predictor/   # Prediction market skills
 │   └── job-finder/  # LinkedIn hiring post search & ranking
+├── simulation/      # Multi-agent social simulation engine
+│   ├── src/         # Python modules (generate_profiles, run_simulation, etc.)
+│   ├── dashboard/   # Live monitoring dashboard (HTML + JS)
+│   ├── simulate.sh  # All-in-one runner script
+│   └── .env         # Simulation LLM credentials (separate from root .env)
 ├── .env             # Credentials (git-ignored)
 └── .env.example     # Credential template
 ```

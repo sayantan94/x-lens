@@ -1,0 +1,612 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>x-lens simulation</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{--font:'Inter',system-ui,sans-serif;--mono:'JetBrains Mono',monospace;--bg:#fafafa;--surface:#fff;--border:#e8e8e8;--border-light:#f0f0f0;--text:#111;--text-2:#555;--text-3:#999;--green:#16a34a;--red:#dc2626;--blue:#2563eb;--amber:#d97706}
+body{background:var(--bg);color:var(--text);font-family:var(--font);height:100vh;display:flex;flex-direction:column;-webkit-font-smoothing:antialiased}
+::-webkit-scrollbar{width:5px}
+::-webkit-scrollbar-thumb{background:#ddd;border-radius:3px}
+
+/* ── Top Bar ── */
+.topbar{background:var(--surface);border-bottom:1px solid var(--border);padding:0 24px;height:56px;display:flex;align-items:center;justify-content:space-between;flex-shrink:0}
+.topbar-left{display:flex;align-items:center;gap:20px}
+.logo{font-size:15px;font-weight:700;letter-spacing:-.03em}
+.logo span{color:var(--text-3);font-weight:400;font-size:12px;font-family:var(--mono);margin-left:6px}
+.chips{display:flex;gap:6px}
+.chip{font-size:11px;font-family:var(--mono);padding:4px 10px;border-radius:6px;background:var(--bg);border:1px solid var(--border);color:var(--text-2);display:flex;align-items:center;gap:5px}
+.chip .dot{width:6px;height:6px;border-radius:50%}
+.chip .dot.tw{background:#000}
+.chip .dot.rd{background:var(--amber)}
+.chip b{color:var(--text);font-weight:600}
+
+.topbar-right{display:flex;align-items:center;gap:12px}
+.status{display:flex;align-items:center;gap:6px;font-size:11px;font-family:var(--mono);color:var(--text-3)}
+.status-dot{width:7px;height:7px;border-radius:50%;background:var(--amber);animation:blink 1.2s infinite}
+.status-dot.done{background:var(--green);animation:none}
+@keyframes blink{50%{opacity:.3}}
+
+/* ── Pipeline Bar ── */
+.pipeline{background:var(--surface);border-bottom:1px solid var(--border);padding:10px 24px;display:flex;align-items:center;gap:0;flex-shrink:0}
+.pipe-step{display:flex;align-items:center;gap:6px;padding:5px 12px;border-radius:6px;font-size:11px;font-family:var(--mono);color:var(--text-3);transition:all .2s;white-space:nowrap}
+.pipe-step.active{background:var(--text);color:#fff;font-weight:600}
+.pipe-step.done-step{color:var(--green);font-weight:500}
+.pipe-step .pipe-icon{font-size:13px}
+.pipe-arrow{color:var(--border);font-size:14px;margin:0 2px;flex-shrink:0}
+.pipe-detail{font-size:10px;color:var(--text-3);font-family:var(--mono);margin-left:auto;display:flex;gap:16px;align-items:center}
+.pipe-detail .pd-item{display:flex;align-items:center;gap:4px}
+.pipe-detail .pd-val{font-weight:600;color:var(--text-2)}
+
+/* ── Layout ── */
+.layout{display:flex;flex:1;overflow:hidden}
+
+/* ── Feed ── */
+.feed-panel{flex:1;display:flex;flex-direction:column;overflow:hidden;border-right:1px solid var(--border)}
+.feed-bar{padding:10px 24px;border-bottom:1px solid var(--border-light);display:flex;align-items:center;justify-content:space-between;flex-shrink:0;background:var(--surface)}
+.feed-bar-left{display:flex;align-items:center;gap:12px}
+.feed-count{font-size:12px;font-weight:600;color:var(--text-2)}
+.feed-filters{display:flex;gap:4px}
+.filter-btn{font-size:10px;font-family:var(--mono);padding:3px 8px;border-radius:4px;border:1px solid transparent;background:transparent;color:var(--text-3);cursor:pointer;font-weight:500}
+.filter-btn:hover{color:var(--text-2)}
+.filter-btn.active{background:var(--text);color:#fff;border-color:var(--text)}
+
+.feed-scroll{flex:1;overflow-y:auto;padding:8px 0}
+
+/* Post cards */
+.post{padding:14px 24px;border-bottom:1px solid var(--border-light);transition:background .1s}
+.post:hover{background:rgba(0,0,0,.015)}
+.post-head{display:flex;align-items:center;gap:10px;margin-bottom:8px}
+.avatar{width:32px;height:32px;border-radius:50%;background:var(--text);color:#fff;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;flex-shrink:0;text-transform:uppercase}
+.avatar.bear{background:var(--red)}
+.avatar.bull{background:var(--green)}
+.avatar.neutral{background:#666}
+.post-meta{flex:1;min-width:0}
+.post-name{font-size:13px;font-weight:600}
+.post-sub{font-size:11px;color:var(--text-3);font-family:var(--mono);display:flex;gap:6px;align-items:center}
+.post-body{font-size:14px;line-height:1.65;color:var(--text);margin-left:42px}
+.post-badge{font-size:9px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;padding:2px 7px;border-radius:3px;white-space:nowrap}
+.badge-post{background:#e8f5e9;color:#2e7d32}
+.badge-like{background:#fff3e0;color:#e65100}
+.badge-repost{background:#e3f2fd;color:#1565c0}
+.badge-comment{background:#f3e5f5;color:#7b1fa2}
+.badge-follow{background:var(--bg);color:var(--text-3);border:1px solid var(--border)}
+.badge-quote{background:#e0f2f1;color:#00695c}
+.badge-idle{background:var(--bg);color:var(--text-3);opacity:.5}
+.badge-other{background:var(--bg);color:var(--text-3)}
+
+.post-quoted{margin-left:42px;margin-top:8px;padding:10px 12px;background:var(--bg);border-radius:6px;border:1px solid var(--border-light);font-size:12px;color:var(--text-2);line-height:1.5}
+.post-action-info{margin-left:42px;font-size:12px;color:var(--text-3);margin-bottom:4px;display:flex;align-items:center;gap:4px}
+
+.feed-empty{display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;gap:8px;color:var(--text-3)}
+.feed-empty-text{font-size:12px;font-family:var(--mono)}
+.spinner{width:20px;height:20px;border:2px solid var(--border);border-top-color:var(--text-3);border-radius:50%;animation:spin .8s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+/* ── Sidebar ── */
+.sidebar{width:360px;display:flex;flex-direction:column;overflow:hidden;background:var(--surface);flex-shrink:0}
+.sidebar-tabs{display:flex;border-bottom:1px solid var(--border);flex-shrink:0}
+.sidebar-tab{flex:1;text-align:center;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;padding:14px 0;color:var(--text-3);cursor:pointer;border:none;background:none;border-bottom:2px solid transparent;transition:all .15s}
+.sidebar-tab:hover{color:var(--text-2)}
+.sidebar-tab.active{color:var(--text);border-bottom-color:var(--text)}
+.sidebar-body{flex:1;overflow-y:auto;padding:0 16px}
+.tab-panel{display:none}
+.tab-panel.active{display:block}
+
+/* Agent cards */
+.agent{padding:14px 0;border-bottom:1px solid var(--border-light)}
+.agent-top{display:flex;align-items:center;gap:10px;margin-bottom:6px;cursor:pointer}
+.agent-top:hover .agent-name{color:var(--blue)}
+.agent-av{width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;color:#fff;flex-shrink:0;text-transform:uppercase}
+.agent-av.bull{background:var(--green)}
+.agent-av.bear{background:var(--red)}
+.agent-av.neutral{background:#888}
+.agent-info{flex:1;min-width:0}
+.agent-name{font-size:13px;font-weight:600;transition:color .1s}
+.agent-handle{font-size:10px;font-family:var(--mono);color:var(--text-3)}
+.agent-tags{display:flex;gap:4px;margin-top:4px;flex-wrap:wrap}
+.tag{font-size:9px;font-weight:600;padding:2px 6px;border-radius:3px;background:var(--bg);color:var(--text-2);border:1px solid var(--border)}
+.tag.topic{background:#eef2ff;color:#4338ca;border-color:#c7d2fe}
+.agent-summary{display:flex;gap:12px;margin-top:8px;align-items:center}
+.agent-stat-label{font-size:9px;font-weight:600;text-transform:uppercase;color:var(--text-3);letter-spacing:.03em}
+.agent-stat-val{font-size:12px;font-family:var(--mono);font-weight:500}
+.bias-bar{width:50px;height:4px;background:var(--border);border-radius:2px;position:relative;display:inline-block;vertical-align:middle}
+.bias-fill{position:absolute;top:0;height:100%;border-radius:2px}
+.bias-fill.bull{background:var(--green);left:50%}
+.bias-fill.bear{background:var(--red);right:50%}
+
+/* Agent expanded detail */
+.agent-detail{display:none;margin-top:10px;padding-top:10px;border-top:1px dashed var(--border)}
+.agent.expanded .agent-detail{display:block}
+.agent-section-label{font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--text-3);margin:10px 0 4px}
+.agent-section-label:first-child{margin-top:0}
+.agent-persona{font-size:11px;line-height:1.65;color:var(--text-2);white-space:pre-wrap}
+.agent-bio-full{font-size:11px;color:var(--text-2);line-height:1.5;font-style:italic}
+.agent-action-log{margin-top:6px}
+.agent-action{padding:6px 0;border-bottom:1px solid var(--border-light);font-size:11px;display:flex;gap:8px;align-items:flex-start}
+.agent-action:last-child{border-bottom:none}
+.agent-action-round{font-family:var(--mono);color:var(--text-3);font-size:10px;flex-shrink:0;width:28px}
+.agent-action-content{flex:1;color:var(--text-2);line-height:1.5}
+.expand-hint{font-size:10px;color:var(--text-3);margin-top:4px;font-family:var(--mono)}
+
+/* Config panel */
+.config-section{padding:14px 0;border-bottom:1px solid var(--border-light)}
+.config-label{font-size:10px;font-weight:600;text-transform:uppercase;color:var(--text-3);letter-spacing:.04em;margin-bottom:6px}
+.config-val{font-size:13px;line-height:1.6;color:var(--text)}
+.config-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:4px}
+.config-kv{display:flex;flex-direction:column}
+.config-k{font-size:9px;font-weight:600;text-transform:uppercase;color:var(--text-3)}
+.config-v{font-size:12px;font-family:var(--mono);font-weight:500}
+
+/* Report panel */
+.report{padding:16px 0;font-size:13px;line-height:1.75;color:var(--text)}
+.report h1,.report h2{font-size:15px;font-weight:700;margin:20px 0 8px;padding-bottom:6px;border-bottom:1px solid var(--border-light)}
+.report h3{font-size:13px;font-weight:700;margin:14px 0 6px}
+.report strong{font-weight:600}
+.report hr{border:none;border-top:1px solid var(--border-light);margin:16px 0}
+.empty-state{padding:48px 0;text-align:center;color:var(--text-3);font-size:11px;font-family:var(--mono)}
+
+@media(max-width:900px){
+  .sidebar{display:none}
+  .feed-panel{border-right:none}
+}
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="topbar-left">
+    <div class="logo">x-lens<span id="sim-id"></span></div>
+    <div class="chips">
+      <div class="chip"><span class="dot tw"></span>Twitter <b id="tw-stat">0</b></div>
+      <div class="chip"><span class="dot rd"></span>Reddit <b id="rd-stat">0</b></div>
+      <div class="chip">Round <b id="round-stat">0/0</b></div>
+      <div class="chip">Agents <b id="agent-stat">0</b></div>
+    </div>
+  </div>
+  <div class="topbar-right">
+    <div class="status">
+      <div class="status-dot" id="status-dot"></div>
+      <span id="status-label">waiting</span>
+    </div>
+  </div>
+</div>
+
+<div class="pipeline" id="pipeline">
+  <div class="pipe-step" data-stage="waiting" id="ps-profiles"><span class="pipe-icon">&#9679;</span> Profiles</div>
+  <span class="pipe-arrow">&#8594;</span>
+  <div class="pipe-step" data-stage="configuring" id="ps-config"><span class="pipe-icon">&#9679;</span> Config</div>
+  <span class="pipe-arrow">&#8594;</span>
+  <div class="pipe-step" data-stage="simulating" id="ps-sim"><span class="pipe-icon">&#9679;</span> Simulating <span id="ps-sim-round"></span></div>
+  <span class="pipe-arrow">&#8594;</span>
+  <div class="pipe-step" data-stage="generating_report" id="ps-report"><span class="pipe-icon">&#9679;</span> Report</div>
+  <span class="pipe-arrow">&#8594;</span>
+  <div class="pipe-step" data-stage="done" id="ps-done"><span class="pipe-icon">&#9679;</span> Done</div>
+  <div class="pipe-detail" id="pipe-detail"></div>
+</div>
+
+<div class="layout">
+  <div class="feed-panel">
+    <div class="feed-bar">
+      <div class="feed-bar-left">
+        <div class="feed-count" id="feed-count">0 events</div>
+        <div class="feed-filters" id="filters">
+          <button class="filter-btn active" data-f="all">All</button>
+          <button class="filter-btn" data-f="posts">Posts</button>
+          <button class="filter-btn" data-f="twitter">Twitter</button>
+          <button class="filter-btn" data-f="reddit">Reddit</button>
+        </div>
+      </div>
+    </div>
+    <div class="feed-scroll" id="feed">
+      <div class="feed-empty" id="feed-empty">
+        <div class="spinner"></div>
+        <div class="feed-empty-text">Waiting for simulation data</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="sidebar">
+    <div class="sidebar-tabs">
+      <button class="sidebar-tab active" data-tab="agents">Agents</button>
+      <button class="sidebar-tab" data-tab="config">Config</button>
+      <button class="sidebar-tab" data-tab="report">Report</button>
+    </div>
+    <div class="sidebar-body">
+      <div class="tab-panel active" id="tab-agents"><div class="empty-state">Loading...</div></div>
+      <div class="tab-panel" id="tab-config"><div class="empty-state">Loading...</div></div>
+      <div class="tab-panel" id="tab-report"><div class="empty-state">Not generated yet</div></div>
+    </div>
+  </div>
+</div>
+
+<script>
+(function(){
+const API=window.location.origin;
+let actions=[],profiles=[],config={},filter='all',lastCount=0;
+
+const esc=s=>String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+
+// Sentiment color from profiles
+const biasMap={};
+function getBiasClass(name){
+  if(biasMap[name]===undefined) return '';
+  return biasMap[name]>0.2?'bull':biasMap[name]<-0.2?'bear':'neutral';
+}
+
+// Tabs
+document.querySelectorAll('.sidebar-tab').forEach(t=>{
+  t.onclick=()=>{
+    document.querySelectorAll('.sidebar-tab').forEach(x=>x.classList.remove('active'));
+    document.querySelectorAll('.tab-panel').forEach(x=>x.classList.remove('active'));
+    t.classList.add('active');
+    document.getElementById('tab-'+t.dataset.tab).classList.add('active');
+  };
+});
+
+// Filters
+document.getElementById('filters').onclick=e=>{
+  const b=e.target.closest('.filter-btn');
+  if(!b)return;
+  filter=b.dataset.f;
+  document.querySelectorAll('.filter-btn').forEach(x=>x.classList.remove('active'));
+  b.classList.add('active');
+  renderFeed();
+};
+
+// Badge helper
+function badge(type){
+  const t=(type||'').toUpperCase();
+  const map={
+    'CREATE_POST':['Post','badge-post'],
+    'LIKE_POST':['Like','badge-like'],
+    'REPOST':['Repost','badge-repost'],
+    'QUOTE_POST':['Quote','badge-quote'],
+    'CREATE_COMMENT':['Comment','badge-comment'],
+    'FOLLOW':['Follow','badge-follow'],
+    'SEARCH_POSTS':['Search','badge-other'],
+    'DO_NOTHING':['Idle','badge-idle'],
+    'UPVOTE_POST':['Upvote','badge-like'],
+    'DOWNVOTE_POST':['Downvote','badge-like'],
+    'DISLIKE_POST':['Dislike','badge-like'],
+  };
+  const [label,cls]=map[t]||[t.replace(/_/g,' '),'badge-other'];
+  return `<span class="post-badge ${cls}">${label}</span>`;
+}
+
+// Filter actions — skip sign_up, event markers
+function realActions(){
+  return actions.filter(a=>{
+    if(a.event) return false;
+    const t=(a.action_type||'').toLowerCase();
+    if(t==='sign_up'||t==='signup') return false;
+    return true;
+  });
+}
+
+function filtered(){
+  let list=realActions();
+  if(filter==='posts') list=list.filter(a=>['CREATE_POST','create_post','QUOTE_POST','quote_post'].includes(a.action_type));
+  else if(filter==='twitter') list=list.filter(a=>a.platform==='twitter');
+  else if(filter==='reddit') list=list.filter(a=>a.platform==='reddit');
+  return list;
+}
+
+// ── Render Feed ──
+function renderFeed(){
+  const el=document.getElementById('feed');
+  const empty=document.getElementById('feed-empty');
+  const list=filtered();
+
+  if(!list.length){
+    el.innerHTML='';
+    el.appendChild(empty);
+    empty.style.display='';
+    document.getElementById('feed-count').textContent='0 events';
+    return;
+  }
+  if(empty)empty.style.display='none';
+  document.getElementById('feed-count').textContent=list.length+' events';
+
+  const rev=[...list].reverse();
+  el.innerHTML=rev.slice(0,500).map(a=>{
+    const name=a.agent_name||('agent_'+a.agent_id);
+    const initial=name.charAt(0);
+    const cls=getBiasClass(name);
+    const args=a.action_args||{};
+    const content=args.content||args.text||'';
+    const type=(a.action_type||'').toUpperCase();
+
+    let body='';
+    let actionInfo='';
+
+    if(type==='LIKE_POST'||type==='UPVOTE_POST'||type==='DOWNVOTE_POST'||type==='DISLIKE_POST'){
+      const icon=type.includes('LIKE')||type.includes('UPVOTE')?'&#9829;':'&#9663;';
+      actionInfo=`<div class="post-action-info">${icon} ${esc(args.target_agent||args.post_author||'')}</div>`;
+      if(args.original_content||args.post_content)
+        body=`<div class="post-quoted">${esc((args.original_content||args.post_content||'').slice(0,200))}</div>`;
+    }else if(type==='REPOST'){
+      actionInfo=`<div class="post-action-info">&#8635; ${esc(args.original_author||args.post_author||'')}</div>`;
+      if(args.original_content||args.post_content)
+        body=`<div class="post-quoted">${esc((args.original_content||args.post_content||'').slice(0,200))}</div>`;
+    }else if(type==='FOLLOW'){
+      actionInfo=`<div class="post-action-info">Followed ${esc(args.target||args.followee_name||'')}</div>`;
+    }else if(type==='QUOTE_POST'){
+      body=`<div class="post-body">${esc(content.slice(0,500))}</div>`;
+      if(args.original_content||args.post_content)
+        body+=`<div class="post-quoted">${esc((args.original_content||args.post_content||'').slice(0,200))}</div>`;
+    }else if(content){
+      body=`<div class="post-body">${esc(content.slice(0,500))}</div>`;
+    }
+
+    return `<div class="post">
+      <div class="post-head">
+        <div class="avatar ${cls}">${esc(initial)}</div>
+        <div class="post-meta">
+          <div class="post-name">${esc(name)}</div>
+          <div class="post-sub">${badge(a.action_type)} <span>${esc(a.platform||'')}</span> <span>R${a.round||0}</span></div>
+        </div>
+      </div>
+      ${actionInfo}${body}
+    </div>`;
+  }).join('');
+}
+
+// ── Render Agents ──
+function renderAgents(){
+  const el=document.getElementById('tab-agents');
+  if(!profiles.length){el.innerHTML='<div class="empty-state">No profiles</div>';return;}
+
+  // Build per-agent action lists
+  const agentActions={};
+  realActions().forEach(a=>{
+    const n=a.agent_name||'agent_'+a.agent_id;
+    if(!agentActions[n]) agentActions[n]=[];
+    agentActions[n].push(a);
+  });
+
+  el.innerHTML=profiles.map(p=>{
+    const bias=p.sentiment_bias||0;
+    const cls=bias>0.2?'bull':bias<-0.2?'bear':'neutral';
+    const bw=Math.abs(bias)*50;
+    const bclass=bias>=0?'bull':'bear';
+    const bstyle=bias>=0?`left:50%;width:${bw}%`:`right:50%;width:${bw}%`;
+    const myActions=agentActions[p.name]||[];
+    biasMap[p.name]=bias;
+
+    // Topics
+    const topics=(p.interested_topics||[]).map(t=>`<span class="tag topic">${esc(t)}</span>`).join('');
+
+    // Per-agent action log
+    let actionLog='';
+    if(myActions.length){
+      actionLog=myActions.map(a=>{
+        const t=(a.action_type||'').toUpperCase();
+        const content=(a.action_args||{}).content||(a.action_args||{}).text||'';
+        const summary=content?esc(content.slice(0,150)):esc(t.replace(/_/g,' ').toLowerCase());
+        return `<div class="agent-action">
+          <div class="agent-action-round">R${a.round||0}</div>
+          <div class="agent-action-content">${badge(a.action_type)} ${summary}</div>
+        </div>`;
+      }).join('');
+    }else{
+      actionLog='<div style="font-size:11px;color:var(--text-3);padding:4px 0">No actions yet</div>';
+    }
+
+    return `<div class="agent" onclick="this.classList.toggle('expanded')">
+      <div class="agent-top">
+        <div class="agent-av ${cls}">${esc((p.name||'?')[0])}</div>
+        <div class="agent-info">
+          <div class="agent-name">${esc(p.name)}</div>
+          <div class="agent-handle">@${esc(p.username)} · ${esc(p.profession)}</div>
+        </div>
+      </div>
+      <div class="agent-tags">
+        <span class="tag">${esc(p.archetype)}</span>
+        <span class="tag">${esc(p.mbti||'')}</span>
+        <span class="tag">age ${p.age||'?'}</span>
+        <span class="tag">influence ${p.influence_weight||0}</span>
+      </div>
+      <div class="agent-summary">
+        <div><span class="agent-stat-label">Acts</span> <span class="agent-stat-val">${myActions.length}</span></div>
+        <div><span class="agent-stat-label">Bias</span> <span class="agent-stat-val">${bias>0?'+':''}${bias.toFixed(1)}</span></div>
+        <div class="bias-bar"><div class="bias-fill ${bclass}" style="${bstyle}"></div></div>
+        <div class="expand-hint">click to expand</div>
+      </div>
+
+      <div class="agent-detail">
+        <div class="agent-section-label">Bio</div>
+        <div class="agent-bio-full">${esc(p.bio||'')}</div>
+
+        <div class="agent-section-label">Topics</div>
+        <div class="agent-tags">${topics||'<span style="font-size:11px;color:var(--text-3)">none</span>'}</div>
+
+        <div class="agent-section-label">Full Persona</div>
+        <div class="agent-persona">${esc(p.persona||'No persona data')}</div>
+
+        <div class="agent-section-label">Actions (${myActions.length})</div>
+        <div class="agent-action-log">${actionLog}</div>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+// ── Render Config ──
+function renderConfig(){
+  const el=document.getElementById('tab-config');
+  if(!config||!config.scenario){el.innerHTML='<div class="empty-state">No config</div>';return;}
+
+  const tc=config.time_config||{};
+  const ec=config.event_config||{};
+  const totalRounds=tc.total_simulation_hours&&tc.minutes_per_round?Math.floor(tc.total_simulation_hours*60/tc.minutes_per_round):'?';
+
+  let html=`<div class="config-section">
+    <div class="config-label">Scenario</div>
+    <div class="config-val">${esc(config.scenario)}</div>
+  </div>`;
+
+  html+=`<div class="config-section">
+    <div class="config-label">Timing</div>
+    <div class="config-grid">
+      <div class="config-kv"><span class="config-k">Hours</span><span class="config-v">${tc.total_simulation_hours||'?'}</span></div>
+      <div class="config-kv"><span class="config-k">Min/Round</span><span class="config-v">${tc.minutes_per_round||'?'}</span></div>
+      <div class="config-kv"><span class="config-k">Total Rounds</span><span class="config-v">${totalRounds}</span></div>
+      <div class="config-kv"><span class="config-k">Peak Multi</span><span class="config-v">${tc.peak_activity_multiplier||'?'}x</span></div>
+    </div>
+  </div>`;
+
+  if(ec.hot_topics&&ec.hot_topics.length){
+    html+=`<div class="config-section">
+      <div class="config-label">Hot Topics</div>
+      <div style="display:flex;gap:4px;flex-wrap:wrap">${ec.hot_topics.map(t=>`<span class="tag">${esc(t)}</span>`).join('')}</div>
+    </div>`;
+  }
+
+  if(ec.initial_posts&&ec.initial_posts.length){
+    html+=`<div class="config-section">
+      <div class="config-label">Seed Posts (${ec.initial_posts.length})</div>
+      ${ec.initial_posts.map(p=>`<div style="margin-top:8px;padding:8px 10px;background:var(--bg);border-radius:6px;border:1px solid var(--border-light);font-size:12px;line-height:1.5;color:var(--text-2)">
+        <div style="font-size:10px;font-weight:600;color:var(--text-3);margin-bottom:3px">Agent #${p.poster_agent_id}</div>
+        ${esc((p.content||'').slice(0,200))}
+      </div>`).join('')}
+    </div>`;
+  }
+
+  el.innerHTML=html;
+}
+
+// ── Render Report ──
+function renderReport(text){
+  const el=document.getElementById('tab-report');
+  if(!text||text==='Report not generated yet.'){
+    el.innerHTML='<div class="empty-state">Not generated yet</div>';
+    return;
+  }
+  let html=esc(text)
+    .replace(/^### (.+)$/gm,'<h3>$1</h3>')
+    .replace(/^## (.+)$/gm,'<h2>$1</h2>')
+    .replace(/^# (.+)$/gm,'<h1>$1</h1>')
+    .replace(/---/g,'<hr>')
+    .replace(/\*\*(.+?)\*\*/g,'<strong>$1</strong>')
+    .replace(/\n/g,'<br>');
+  el.innerHTML=`<div class="report">${html}</div>`;
+}
+
+// ── Stats ──
+function renderStats(status){
+  const real=realActions();
+  const tw=real.filter(a=>a.platform==='twitter');
+  const rd=real.filter(a=>a.platform==='reddit');
+
+  document.getElementById('tw-stat').textContent=tw.length;
+  document.getElementById('rd-stat').textContent=rd.length;
+  document.getElementById('round-stat').textContent=(status.current_round||0)+'/'+(status.total_rounds||'?');
+  document.getElementById('agent-stat').textContent=status.agents_active||profiles.length;
+
+  const dot=document.getElementById('status-dot');
+  const label=document.getElementById('status-label');
+  const stage=status.stage||'waiting';
+
+  if(stage==='done'){
+    dot.classList.add('done');
+    label.textContent='complete';
+  }else if(stage==='simulating'){
+    dot.classList.remove('done');
+    label.textContent='simulating R'+(status.current_round||0);
+  }else if(stage==='generating_report'){
+    dot.classList.remove('done');
+    label.textContent='generating report';
+  }else{
+    dot.classList.remove('done');
+    label.textContent=stage;
+  }
+
+  // Pipeline bar
+  const stages=['waiting','configuring','ready','simulating','generating_report','done'];
+  const stageIdx=stages.indexOf(stage);
+  const stepMap={
+    'ps-profiles':['waiting','configuring'],
+    'ps-config':['configuring','ready'],
+    'ps-sim':['simulating'],
+    'ps-report':['generating_report'],
+    'ps-done':['done']
+  };
+  // Mark steps as done or active
+  const stepOrder=['ps-profiles','ps-config','ps-sim','ps-report','ps-done'];
+  const stepStageIdx={'ps-profiles':1,'ps-config':2,'ps-sim':3,'ps-report':4,'ps-done':5};
+  stepOrder.forEach(id=>{
+    const el=document.getElementById(id);
+    el.classList.remove('active','done-step');
+    const myIdx=stepStageIdx[id];
+    if(stageIdx>=myIdx){
+      el.classList.add('done-step');
+      el.querySelector('.pipe-icon').innerHTML='&#10003;';
+    }else if(stepMap[id].includes(stage)){
+      el.classList.add('active');
+      el.querySelector('.pipe-icon').innerHTML='&#9654;';
+    }else{
+      el.querySelector('.pipe-icon').innerHTML='&#9679;';
+    }
+  });
+
+  // Round counter on sim step
+  const simRound=document.getElementById('ps-sim-round');
+  if(stage==='simulating'){
+    simRound.textContent='R'+(status.current_round||0)+'/'+(status.total_rounds||'?');
+  }else if(stageIdx>3){
+    simRound.textContent=(status.total_rounds||'?')+' rounds';
+  }else{
+    simRound.textContent='';
+  }
+
+  // Action breakdown in pipe-detail
+  const bd=status.action_breakdown||{};
+  const detailEl=document.getElementById('pipe-detail');
+  const parts=[];
+  if(bd.create_post) parts.push(`<span class="pd-item">Posts <span class="pd-val">${bd.create_post}</span></span>`);
+  if(bd.like_post) parts.push(`<span class="pd-item">Likes <span class="pd-val">${bd.like_post}</span></span>`);
+  if(bd.repost) parts.push(`<span class="pd-item">Reposts <span class="pd-val">${bd.repost}</span></span>`);
+  if(bd.create_comment) parts.push(`<span class="pd-item">Comments <span class="pd-val">${bd.create_comment}</span></span>`);
+  if(bd.follow) parts.push(`<span class="pd-item">Follows <span class="pd-val">${bd.follow}</span></span>`);
+  if(bd.do_nothing) parts.push(`<span class="pd-item">Idle <span class="pd-val">${bd.do_nothing}</span></span>`);
+  detailEl.innerHTML=parts.join('');
+}
+
+// ── Fetch Loop ──
+async function fetchAll(){
+  try{
+    const [aR,pR,cR,sR,rR]=await Promise.all([
+      fetch(API+'/api/actions'),fetch(API+'/api/profiles'),
+      fetch(API+'/api/config'),fetch(API+'/api/status'),
+      fetch(API+'/api/report'),
+    ]);
+    actions=await aR.json();
+    const p=await pR.json();
+    if(Array.isArray(p)){
+      profiles=p;
+      profiles.forEach(pr=>{biasMap[pr.name]=pr.sentiment_bias||0;});
+    }
+    config=await cR.json();
+    const status=await sR.json();
+    const report=await rR.text();
+
+    if(config.simulation_id) document.getElementById('sim-id').textContent=config.simulation_id;
+
+    renderStats(status);
+    renderFeed();
+    renderAgents();
+    renderConfig();
+    renderReport(report);
+  }catch(e){console.warn('fetch:',e)}
+}
+
+fetchAll();
+setInterval(fetchAll,3000);
+})();
+</script>
+</body>
+</html>
