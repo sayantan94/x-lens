@@ -51,7 +51,7 @@ function hasVertexAdcCredentials(): boolean {
 /**
  * Get API key for provider from known environment variables, e.g. OPENAI_API_KEY.
  *
- * Will not return API keys for providers that require OAuth tokens.
+ * Returns undefined if no key is found.
  */
 export function getEnvApiKey(provider: KnownProvider): string | undefined;
 export function getEnvApiKey(provider: string): string | undefined;
@@ -61,9 +61,8 @@ export function getEnvApiKey(provider: any): string | undefined {
 		return process.env.COPILOT_GITHUB_TOKEN || process.env.GH_TOKEN || process.env.GITHUB_TOKEN;
 	}
 
-	// ANTHROPIC_OAUTH_TOKEN takes precedence over ANTHROPIC_API_KEY
 	if (provider === "anthropic") {
-		return process.env.ANTHROPIC_OAUTH_TOKEN || process.env.ANTHROPIC_API_KEY;
+		return process.env.ANTHROPIC_API_KEY;
 	}
 
 	// Vertex AI uses Application Default Credentials, not API keys.

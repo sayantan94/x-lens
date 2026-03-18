@@ -349,7 +349,7 @@ export const streamGoogleGeminiCli: StreamFunction<"google-gemini-cli", GoogleGe
 			// apiKey is JSON-encoded: { token, projectId }
 			const apiKeyRaw = options?.apiKey;
 			if (!apiKeyRaw) {
-				throw new Error("Google Cloud Code Assist requires OAuth authentication. Use /login to authenticate.");
+				throw new Error("Google Cloud Code Assist requires authentication. Set up credentials first.");
 			}
 
 			let accessToken: string;
@@ -794,7 +794,7 @@ export const streamSimpleGoogleGeminiCli: StreamFunction<"google-gemini-cli", Si
 ): AssistantMessageEventStream => {
 	const apiKey = options?.apiKey;
 	if (!apiKey) {
-		throw new Error("Google Cloud Code Assist requires OAuth authentication. Use /login to authenticate.");
+		throw new Error("Google Cloud Code Assist requires authentication. Set up credentials first.");
 	}
 
 	const base = buildBaseOptions(model, options, apiKey);
