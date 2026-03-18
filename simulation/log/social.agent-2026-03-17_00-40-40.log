@@ -1,4 +1,0 @@
-INFO - 2026-03-17 00:40:41,577 - social.agent - Agent 3: {'success': True, 'post_id': 1}
-INFO - 2026-03-17 00:40:43,237 - social.agent - Agent 4: {'success': True, 'post_id': 2}
-INFO - 2026-03-17 00:40:43,355 - social.agent - Agent 2: {'success': True, 'post_id': 3}
-INFO - 2026-03-17 00:40:44,504 - social.agent - Agent 1: {'success': True, 'post_id': 4}

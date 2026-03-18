@@ -1,9 +1,0 @@
-2026-03-17 00:40:41,463 - oasis.env - INFO - update rec table.
-2026-03-17 00:40:41,577 - oasis.env - INFO - performed all actions.
-2026-03-17 00:40:43,125 - oasis.env - INFO - update rec table.
-2026-03-17 00:40:43,237 - oasis.env - INFO - performed all actions.
-2026-03-17 00:40:43,238 - oasis.env - INFO - update rec table.
-2026-03-17 00:40:43,356 - oasis.env - INFO - performed all actions.
-2026-03-17 00:40:44,392 - oasis.env - INFO - update rec table.
-2026-03-17 00:40:44,504 - oasis.env - INFO - performed all actions.
-2026-03-17 00:50:45,408 - oasis.env - INFO - Simulation finished! Please check the results in the database: runs/nvidia-earnings-2026/twitter_simulation.db. Note that the trace table stored all the actions of the agents.
