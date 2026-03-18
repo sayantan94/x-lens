@@ -1,9 +1,0 @@
-2026-03-17 00:13:39,169 - oasis.env - INFO - update rec table.
-2026-03-17 00:13:39,292 - oasis.env - INFO - performed all actions.
-2026-03-17 00:15:00,621 - oasis.env - INFO - update rec table.
-2026-03-17 00:15:00,740 - oasis.env - INFO - performed all actions.
-2026-03-17 00:15:00,741 - oasis.env - INFO - update rec table.
-2026-03-17 00:15:00,857 - oasis.env - INFO - performed all actions.
-2026-03-17 00:15:02,808 - oasis.env - INFO - update rec table.
-2026-03-17 00:15:02,924 - oasis.env - INFO - performed all actions.
-2026-03-17 00:25:02,994 - oasis.env - INFO - Simulation finished! Please check the results in the database: /tmp/sim_test_1773731099/twitter_simulation.db. Note that the trace table stored all the actions of the agents.
