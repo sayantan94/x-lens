@@ -4,3 +4,16 @@ dist/
 *.tgz
 .env*
 .venv
+docs/
+
+# Backup files
+*.bak
+*.bak.*
+*.bak[0-9]*
+
+# Generated report files (timestamped)
+*_20??-??-??_*.json
+*_20??-??-??_*.md
+
+# OS junk
+.DS_Store

@@ -1,5 +1,6 @@
-import { readFileSync, readdirSync, existsSync, statSync } from "node:fs";
+import { readFileSync, readdirSync, existsSync, statSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
+import { homedir } from "node:os";
 
 export interface Skill {
   name: string;
@@ -131,6 +132,14 @@ export function loadSkills(projectRoot: string, persona?: string): Skill[] {
     }
   }
 
+  // Load user-created skills (~/.x-lens/skills/)
+  const userDir = join(homedir(), ".x-lens", "skills");
+  for (const skill of loadSkillsFromDir(userDir)) {
+    if (!skillMap.has(skill.name)) {
+      skillMap.set(skill.name, skill);
+    }
+  }
+
   return Array.from(skillMap.values());
 }
 
@@ -161,4 +170,16 @@ export function formatSkillsForMatching(skills: Skill[]): string {
   return skills
     .map((s) => `- name: "${s.name}", description: "${s.description}", triggers: [${s.triggers.join(", ")}]`)
     .join("\n");
+}
+
+/**
+ * Directory where user-created skills are stored.
+ * Lives at ~/.x-lens/skills/ (outside the repo, user-writable).
+ */
+export function getUserSkillsDir(): string {
+  const dir = join(homedir(), ".x-lens", "skills");
+  if (!existsSync(dir)) {
+    mkdirSync(dir, { recursive: true });
+  }
+  return dir;
 }

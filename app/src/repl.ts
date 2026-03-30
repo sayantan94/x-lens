@@ -23,6 +23,7 @@ import { StatusServer } from "./status-server.js";
 import { formatToolLabel, extractResultPreview } from "./render.js";
 import {
 	readMemory,
+	readUser,
 	loadSessionMessages,
 	appendSessionMessage,
 	saveSessionMessages,
@@ -30,6 +31,12 @@ import {
 } from "./memory.js";
 import { shouldCompact, isContextOverflow, compact } from "./compaction.js";
 import { JobStore } from "./job-store.js";
+import {
+	createSession,
+	endSession,
+	insertMessage,
+	incrementSessionCounts,
+} from "./session-store.js";
 import {
 	markdownTheme,
 	userMarkdownTheme,
@@ -72,7 +79,7 @@ function convertToLlm(messages: Message[]): Message[] {
 	);
 }
 
-function buildSystemPrompt(skills: ReturnType<typeof loadSkills>, memory: string): string {
+function buildSystemPrompt(skills: ReturnType<typeof loadSkills>, memory: string, userProfile: string): string {
 	const skillsSection = formatSkillsForPrompt(skills);
 
 	return `You are x-lens, a personal AI agent that helps users accomplish tasks.
@@ -106,8 +113,35 @@ Always report back what you did and the outcome.
 ## Your Memory
 ${memory}
 
-You can save important information using the memory_write or memory_append tools.
-Save things like: user preferences, frequently used URLs, login info hints, recurring tasks.
+## User Profile
+${userProfile}
+
+## Autonomous Learning — IMPORTANT
+
+You have a CLOSED LEARNING LOOP. Use it proactively:
+
+### When to save to MEMORY (environment/project facts):
+- You discover a tool quirk, API convention, or project pattern
+- A command fails and you find the fix — save it so you don't repeat the mistake
+- You learn about the codebase structure, deployment process, or infrastructure
+
+### When to save to USER PROFILE (who the user is):
+- User corrects your communication style ("don't explain so much", "I prefer tables")
+- User shares their role, expertise, timezone, or workflow preferences
+- User says "remember that I..." or "I always..."
+- You notice the user's skill level in a domain (expert in Go, new to React)
+
+### When to create/improve SKILLS:
+- After completing a complex task (5+ tool calls) successfully — save the workflow as a skill
+- When using a skill and finding it outdated or incomplete — patch it immediately
+- When the user teaches you a recurring workflow — capture it as a skill
+
+### When to search past sessions:
+- User says "remember when we...", "last time", "as I mentioned", "we did this before"
+- You need context from a prior conversation to avoid re-doing work
+- Before asking the user to repeat information they may have already given you
+
+Do NOT wait to be asked. Save proactively when any trigger above fires.
 
 ${skillsSection}`;
 }
@@ -142,6 +176,7 @@ export async function runInteractive(options: ReplOptions = {}): Promise<void> {
 
 	const model = resolveModel(options);
 	const memory = readMemory();
+	const userProfile = readUser();
 
 	// Handle session
 	if (options.new) {
@@ -150,7 +185,7 @@ export async function runInteractive(options: ReplOptions = {}): Promise<void> {
 
 	const agent = new Agent({
 		initialState: {
-			systemPrompt: buildSystemPrompt(skills, memory),
+			systemPrompt: buildSystemPrompt(skills, memory, userProfile),
 			model,
 			thinkingLevel: "off",
 			tools,
@@ -166,15 +201,19 @@ export async function runInteractive(options: ReplOptions = {}): Promise<void> {
 		agent.replaceMessages(previousMessages);
 	}
 
+	// Derive names early — used for both session recording and TUI header
+	const providerName = options.provider || "bedrock";
+	const modelName = options.model || process.env.X_LENS_MODEL || (providerName === "anthropic" ? "claude-sonnet-4-20250514" : "anthropic.claude-sonnet-4-20250514-v1:0");
+
+	// Session recording (SQLite)
+	const sessionId = `repl_${Date.now()}`;
+	createSession({ id: sessionId, persona: options.persona || "", model: modelName });
+
 	// -----------------------------------------------------------------------
 	// TUI setup
 	// -----------------------------------------------------------------------
 	const terminal = new ProcessTerminal();
 	const tui = new TUI(terminal);
-
-	// Header
-	const providerName = options.provider || "bedrock";
-	const modelName = options.model || process.env.X_LENS_MODEL || (providerName === "anthropic" ? "claude-sonnet-4-20250514" : "anthropic.claude-sonnet-4-20250514-v1:0");
 	let header = new TruncatedText(
 		buildHeaderText(options.persona, providerName, modelName, 0, model.contextWindow),
 		1,
@@ -220,6 +259,10 @@ export async function runInteractive(options: ReplOptions = {}): Promise<void> {
 	let lastCacheReadTokens = 0;
 	let lastCacheWriteTokens = 0;
 	let turnStartTime = 0;
+	let lastCtrlCTime = 0;
+
+	// Natural-language abort commands recognised when the agent is busy
+	const ABORT_COMMANDS = new Set(["stop", "abort", "cancel", "kill", "quit"]);
 
 	const browserToolNames = new Set([
 		"browser_navigate", "browser_screenshot", "browser_click",
@@ -390,6 +433,8 @@ export async function runInteractive(options: ReplOptions = {}): Promise<void> {
 				source: "repl",
 			});
 
+			incrementSessionCounts(sessionId, 0, 1);
+
 			// Browser screenshots — display inline + send to status
 			if (browserToolNames.has(event.toolName)) {
 				const content = (event.result as any)?.content;
@@ -414,6 +459,18 @@ export async function runInteractive(options: ReplOptions = {}): Promise<void> {
 		// Track token usage
 		if (event.type === "message_end") {
 			appendSessionMessage(event.message as Message);
+
+			// Persist to SQLite session store
+			const msgAny = event.message as any;
+			if (msgAny.role === "user" || msgAny.role === "assistant") {
+				const text = Array.isArray(msgAny.content)
+					? msgAny.content.filter((b: any) => b.type === "text").map((b: any) => b.text).join("\n")
+					: String(msgAny.content || "");
+				if (text.trim()) {
+					insertMessage({ sessionId, role: msgAny.role, content: text });
+					incrementSessionCounts(sessionId, 1, 0);
+				}
+			}
 
 			const msg = event.message as any;
 			if (msg.role === "assistant" && msg.usage) {
@@ -618,6 +675,15 @@ export async function runInteractive(options: ReplOptions = {}): Promise<void> {
 		insertBeforeEditor(userMd);
 
 		if (agentBusy) {
+			// Check for abort commands first
+			if (ABORT_COMMANDS.has(trimmed.toLowerCase())) {
+				aborted = true;
+				agent.abort();
+				const interruptComp = new Text(chalk.yellow("  Stopping..."), 0, 0);
+				insertBeforeEditor(interruptComp);
+				return;
+			}
+
 			// Steer agent with new instruction
 			const steerNotice = new Text(chalk.yellow("  Steering agent with new instruction..."), 0, 0);
 			insertBeforeEditor(steerNotice);
@@ -670,26 +736,77 @@ export async function runInteractive(options: ReplOptions = {}): Promise<void> {
 	};
 
 	// -----------------------------------------------------------------------
-	// Ctrl+C handling via TUI input
+	// Abort helper — single place that handles aborting the agent
+	// -----------------------------------------------------------------------
+	function doAbort(source: string) {
+		if (!agentBusy) return;
+		aborted = true;
+		agent.abort();
+		const interruptComp = new Text(chalk.yellow("  Stopping..."), 0, 0);
+		insertBeforeEditor(interruptComp);
+	}
+
+	function doForceExit() {
+		tui.stop();
+		endSession(sessionId);
+		status.stop().catch(() => {});
+		browser.close().catch(() => {});
+		process.exit(130);
+	}
+
+	function doCleanExit() {
+		tui.stop();
+		endSession(sessionId);
+		status.stop().catch(() => {});
+		browser.close().catch(() => {});
+		process.exit(0);
+	}
+
+	// -----------------------------------------------------------------------
+	// Ctrl+C handling via TUI input + process-level SIGINT fallback
 	// -----------------------------------------------------------------------
 	const originalHandleInput = editor.handleInput.bind(editor);
 	editor.handleInput = (data: string) => {
 		if (matchesKey(data, Key.ctrl("c"))) {
+			const now = Date.now();
 			if (agentBusy) {
-				aborted = true;
-				agent.abort();
-				const interruptComp = new Text(chalk.yellow("  Interrupting..."), 0, 0);
-				insertBeforeEditor(interruptComp);
+				doAbort("ctrl-c");
+				// Double Ctrl+C within 1s → force exit
+				if (now - lastCtrlCTime < 1000) {
+					doForceExit();
+				}
+				lastCtrlCTime = now;
 				return;
 			}
-			// Not busy — exit
-			tui.stop();
-			status.stop().catch(() => {});
-			browser.close().catch(() => {});
-			process.exit(0);
+			// Not busy — exit cleanly
+			doCleanExit();
 		}
 		originalHandleInput(data);
 	};
+
+	// Process-level SIGINT fallback — fires even if TUI input is stuck
+	process.on("SIGINT", () => {
+		const now = Date.now();
+		if (agentBusy) {
+			doAbort("sigint");
+			if (now - lastCtrlCTime < 1000) {
+				doForceExit();
+			}
+			lastCtrlCTime = now;
+			return;
+		}
+		doCleanExit();
+	});
+
+	// Ctrl+Z suspend/resume — stop TUI before suspending, restart on resume
+	process.on("SIGTSTP", () => {
+		tui.stop();
+		process.kill(process.pid, "SIGTSTP");
+	});
+	process.on("SIGCONT", () => {
+		tui.start();
+		tui.requestRender();
+	});
 
 	// -----------------------------------------------------------------------
 	// Start

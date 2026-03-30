@@ -45,8 +45,12 @@ body{background:var(--bg);color:var(--text);font-family:var(--font);height:100vh
 /* ── Layout ── */
 .layout{display:flex;flex:1;overflow:hidden}
 
+/* ── Resizer ── */
+.resizer{width:5px;cursor:col-resize;background:var(--border);flex-shrink:0;transition:background .15s}
+.resizer:hover,.resizer.dragging{background:var(--blue);opacity:.6}
+
 /* ── Feed ── */
-.feed-panel{flex:1;display:flex;flex-direction:column;overflow:hidden;border-right:1px solid var(--border)}
+.feed-panel{flex:1;display:flex;flex-direction:column;overflow:hidden;border-right:none;min-width:200px}
 .feed-bar{padding:10px 24px;border-bottom:1px solid var(--border-light);display:flex;align-items:center;justify-content:space-between;flex-shrink:0;background:var(--surface)}
 .feed-bar-left{display:flex;align-items:center;gap:12px}
 .feed-count{font-size:12px;font-weight:600;color:var(--text-2)}
@@ -78,6 +82,38 @@ body{background:var(--bg);color:var(--text);font-family:var(--font);height:100vh
 .badge-quote{background:#e0f2f1;color:#00695c}
 .badge-idle{background:var(--bg);color:var(--text-3);opacity:.5}
 .badge-other{background:var(--bg);color:var(--text-3)}
+.badge-search{background:#ede9fe;color:#6d28d9}
+
+/* Search card */
+.search-card{margin-left:42px;margin-top:8px;padding:12px 14px;background:linear-gradient(135deg,#faf5ff,#f3e8ff);border-radius:10px;border:1px solid #e9d5ff;font-size:12px;line-height:1.6}
+.search-query{font-family:var(--mono);font-size:11px;color:#7c3aed;margin-bottom:6px;display:flex;align-items:center;gap:6px}
+.search-query::before{content:'🔍';font-size:13px}
+.search-result{color:var(--text-2);max-height:none;white-space:pre-wrap;word-break:break-word;margin-top:6px;padding:8px 10px;background:rgba(255,255,255,0.6);border-radius:6px;font-size:11.5px;line-height:1.55}
+.search-result.collapsed{max-height:80px;overflow:hidden;position:relative}
+.search-result.collapsed::after{content:'';position:absolute;bottom:0;left:0;right:0;height:30px;background:linear-gradient(transparent,#f3e8ff)}
+.search-toggle{font-size:10px;color:#7c3aed;cursor:pointer;margin-top:4px;font-family:var(--mono);user-select:none}
+.search-toggle:hover{text-decoration:underline}
+.search-sources{margin-top:6px;font-size:10px;color:var(--text-3);font-family:var(--mono)}
+.search-remaining{font-size:10px;color:#a78bfa;font-family:var(--mono);margin-top:4px}
+
+/* Search stats in pipeline bar */
+.search-stat{color:#7c3aed;font-weight:600}
+
+/* Fact-check verdict badges */
+.verdict-badge{font-size:9px;font-weight:700;padding:2px 6px;border-radius:3px;margin-left:6px;cursor:help;display:inline-block}
+.verdict-verified{background:#dcfce7;color:#166534}
+.verdict-mismatch{background:#fee2e2;color:#991b1b}
+.verdict-partial{background:#fef9c3;color:#854d0e}
+.verdict-unverifiable{background:#f3f4f6;color:#6b7280}
+
+/* Fact-check detail block under posts */
+.fc-detail{margin-left:42px;margin-top:8px;padding:10px 12px;border-radius:8px;font-size:11px;line-height:1.5}
+.fc-detail.verified{background:#f0fdf4;border:1px solid #bbf7d0}
+.fc-detail.mismatch{background:#fef2f2;border:1px solid #fecaca}
+.fc-detail.partial{background:#fefce8;border:1px solid #fef08a}
+.fc-claim{display:flex;gap:8px;padding:4px 0;border-bottom:1px solid rgba(0,0,0,0.05)}
+.fc-claim:last-child{border-bottom:none}
+.fc-sources{margin-top:6px;font-size:10px;color:var(--text-3);font-family:var(--mono)}
 
 .post-quoted{margin-left:42px;margin-top:8px;padding:10px 12px;background:var(--bg);border-radius:6px;border:1px solid var(--border-light);font-size:12px;color:var(--text-2);line-height:1.5}
 .post-action-info{margin-left:42px;font-size:12px;color:var(--text-3);margin-bottom:4px;display:flex;align-items:center;gap:4px}
@@ -88,7 +124,7 @@ body{background:var(--bg);color:var(--text);font-family:var(--font);height:100vh
 @keyframes spin{to{transform:rotate(360deg)}}
 
 /* ── Sidebar ── */
-.sidebar{width:360px;display:flex;flex-direction:column;overflow:hidden;background:var(--surface);flex-shrink:0}
+.sidebar{width:360px;display:flex;flex-direction:column;overflow:hidden;background:var(--surface);flex-shrink:0;min-width:200px}
 .sidebar-tabs{display:flex;border-bottom:1px solid var(--border);flex-shrink:0}
 .sidebar-tab{flex:1;text-align:center;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;padding:14px 0;color:var(--text-3);cursor:pointer;border:none;background:none;border-bottom:2px solid transparent;transition:all .15s}
 .sidebar-tab:hover{color:var(--text-2)}
@@ -161,6 +197,9 @@ body{background:var(--bg);color:var(--text);font-family:var(--font);height:100vh
 <div class="topbar">
   <div class="topbar-left">
     <div class="logo">x-lens<span id="sim-id"></span></div>
+    <select id="sim-picker" style="font-size:11px;font-family:var(--mono);padding:4px 8px;border-radius:6px;border:1px solid var(--border);background:var(--surface);color:var(--text-2);cursor:pointer;max-width:260px">
+      <option value="">Current simulation</option>
+    </select>
     <div class="chips">
       <div class="chip"><span class="dot tw"></span>Twitter <b id="tw-stat">0</b></div>
       <div class="chip"><span class="dot rd"></span>Reddit <b id="rd-stat">0</b></div>
@@ -197,6 +236,8 @@ body{background:var(--bg);color:var(--text);font-family:var(--font);height:100vh
         <div class="feed-filters" id="filters">
           <button class="filter-btn active" data-f="all">All</button>
           <button class="filter-btn" data-f="posts">Posts</button>
+          <button class="filter-btn" data-f="searches">🔍 Searches</button>
+          <button class="filter-btn" data-f="fact-checks">✓✗ Fact Checks</button>
           <button class="filter-btn" data-f="twitter">Twitter</button>
           <button class="filter-btn" data-f="reddit">Reddit</button>
         </div>
@@ -210,15 +251,21 @@ body{background:var(--bg);color:var(--text);font-family:var(--font);height:100vh
     </div>
   </div>
 
+  <div class="resizer" id="resizer"></div>
+
   <div class="sidebar">
     <div class="sidebar-tabs">
       <button class="sidebar-tab active" data-tab="agents">Agents</button>
+      <button class="sidebar-tab" data-tab="seeds">Seeds</button>
       <button class="sidebar-tab" data-tab="config">Config</button>
+      <button class="sidebar-tab" data-tab="fact-checks">Fact Checks</button>
       <button class="sidebar-tab" data-tab="report">Report</button>
     </div>
     <div class="sidebar-body">
       <div class="tab-panel active" id="tab-agents"><div class="empty-state">Loading...</div></div>
+      <div class="tab-panel" id="tab-seeds"><div class="empty-state">No seed posts</div></div>
       <div class="tab-panel" id="tab-config"><div class="empty-state">Loading...</div></div>
+      <div class="tab-panel" id="tab-fact-checks"><div class="empty-state">No fact-checks yet</div></div>
       <div class="tab-panel" id="tab-report"><div class="empty-state">Not generated yet</div></div>
     </div>
   </div>
@@ -228,6 +275,46 @@ body{background:var(--bg);color:var(--text);font-family:var(--font);height:100vh
 (function(){
 const API=window.location.origin;
 let actions=[],profiles=[],config={},filter='all',lastCount=0;
+let activeSim=''; // empty = current sim
+
+// ── Simulation Picker ──
+async function loadSimList(){
+  try{
+    const r=await fetch(API+'/api/simulations');
+    const sims=await r.json();
+    const picker=document.getElementById('sim-picker');
+    picker.innerHTML='<option value="">Current simulation</option>';
+    sims.forEach(s=>{
+      const opt=document.createElement('option');
+      opt.value=s.id;
+      const meta=s.metadata||{};
+      const scenario=(meta.scenario||'').substring(0,80);
+      const status=s.running?' ⚡ LIVE':s.has_report?' ✓':'';
+      const label=s.id+(scenario?' — '+scenario:'')+status;
+      opt.textContent=label;
+      if(s.id===activeSim) opt.selected=true;
+      picker.appendChild(opt);
+    });
+  }catch(e){}
+}
+document.getElementById('sim-picker').addEventListener('change',function(){
+  activeSim=this.value;
+  actions=[];profiles=[];config={};lastCount=0;
+  // Clear all rendered panels
+  document.getElementById('feed').innerHTML='';
+  document.getElementById('tab-agents').innerHTML='<div class="empty-state">Loading...</div>';
+  document.getElementById('tab-seeds').innerHTML='<div class="empty-state">Loading...</div>';
+  document.getElementById('tab-config').innerHTML='<div class="empty-state">Loading...</div>';
+  document.getElementById('tab-report').innerHTML='<div class="empty-state">Loading...</div>';
+  document.getElementById('sim-id').textContent=activeSim||'';
+  document.getElementById('tw-stat').textContent='0';
+  document.getElementById('rd-stat').textContent='0';
+  document.getElementById('round-stat').textContent='0/0';
+  document.getElementById('agent-stat').textContent='0';
+  fetchAll();
+});
+loadSimList();
+setInterval(loadSimList,15000); // refresh sim list every 15s
 
 const esc=s=>String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 
@@ -259,6 +346,26 @@ document.getElementById('filters').onclick=e=>{
 };
 
 // Badge helper
+// Store full search results by ID for expand/collapse
+const _searchResults={};
+
+function toggleSearch(id){
+  const el=document.getElementById(id);
+  const btn=document.getElementById('btn-'+id);
+  const full=_searchResults[id]||'';
+  if(!el||!btn) return;
+  if(el.classList.contains('collapsed')){
+    el.classList.remove('collapsed');
+    el.textContent=full;
+    btn.textContent='Show less ▴';
+  }else{
+    el.classList.add('collapsed');
+    el.textContent=full.slice(0,300)+(full.length>300?'...':'');
+    btn.textContent='Show more ▾';
+  }
+}
+window.toggleSearch=toggleSearch;
+
 function badge(type){
   const t=(type||'').toUpperCase();
   const map={
@@ -273,6 +380,7 @@ function badge(type){
     'UPVOTE_POST':['Upvote','badge-like'],
     'DOWNVOTE_POST':['Downvote','badge-like'],
     'DISLIKE_POST':['Dislike','badge-like'],
+    'SEARCH_WEB':['🔍 Search','badge-search'],
   };
   const [label,cls]=map[t]||[t.replace(/_/g,' '),'badge-other'];
   return `<span class="post-badge ${cls}">${label}</span>`;
@@ -283,7 +391,7 @@ function realActions(){
   return actions.filter(a=>{
     if(a.event) return false;
     const t=(a.action_type||'').toLowerCase();
-    if(t==='sign_up'||t==='signup') return false;
+    if(t==='sign_up'||t==='signup'||t==='refresh') return false;
     return true;
   });
 }
@@ -291,6 +399,8 @@ function realActions(){
 function filtered(){
   let list=realActions();
   if(filter==='posts') list=list.filter(a=>['CREATE_POST','create_post','QUOTE_POST','quote_post'].includes(a.action_type));
+  else if(filter==='searches') list=list.filter(a=>['SEARCH_WEB','search_web'].includes(a.action_type));
+  else if(filter==='fact-checks') list=list.filter(a=>a.fact_check);
   else if(filter==='twitter') list=list.filter(a=>a.platform==='twitter');
   else if(filter==='reddit') list=list.filter(a=>a.platform==='reddit');
   return list;
@@ -311,6 +421,11 @@ function renderFeed(){
   }
   if(empty)empty.style.display='none';
   document.getElementById('feed-count').textContent=list.length+' events';
+  // Update search count
+  const searchCount=realActions().filter(a=>['SEARCH_WEB','search_web'].includes(a.action_type)).length;
+  const searchEl=document.getElementById('search-count');
+  if(searchEl) searchEl.textContent=searchCount;
+  if(searchEl) searchEl.parentElement.style.display=searchCount>0?'':'none';
 
   const rev=[...list].reverse();
   el.innerHTML=rev.slice(0,500).map(a=>{
@@ -335,6 +450,22 @@ function renderFeed(){
         body=`<div class="post-quoted">${esc((args.original_content||args.post_content||'').slice(0,200))}</div>`;
     }else if(type==='FOLLOW'){
       actionInfo=`<div class="post-action-info">Followed ${esc(args.target||args.followee_name||'')}</div>`;
+    }else if(type==='SEARCH_WEB'){
+      const query=args.query||'';
+      const result=args.result||content||'';
+      const cleanResult=result.replace(/^\[WEB SEARCH RESULT\].*?\n\n/,'');
+      const mainParts=cleanResult.split(/\nSources:\n/);
+      const mainResult=mainParts[0]||'';
+      const sources=mainParts[1]||'';
+      const searchId='search-'+a.round+'-'+a.agent_id+'-'+Math.random().toString(36).slice(2,6);
+      _searchResults[searchId]=mainResult;
+      const preview=mainResult.slice(0,300)+(mainResult.length>300?'...':'');
+      body=`<div class="search-card">
+        <div class="search-query">🔍 ${esc(query)}</div>
+        <div class="search-result collapsed" id="${searchId}">${esc(mainResult)}</div>
+        ${mainResult.length>300?`<div class="search-toggle" id="btn-${searchId}" onclick="toggleSearch('${searchId}')">Show more ▾</div>`:''}
+        ${sources?`<div class="search-sources">📎 ${esc(sources.slice(0,300))}</div>`:''}
+      </div>`;
     }else if(type==='QUOTE_POST'){
       body=`<div class="post-body">${esc(content.slice(0,500))}</div>`;
       if(args.original_content||args.post_content)
@@ -343,15 +474,37 @@ function renderFeed(){
       body=`<div class="post-body">${esc(content.slice(0,500))}</div>`;
     }
 
+    // Fact-check verdict badge
+    let verdictHtml='';
+    if(a.fact_check){
+      const fc=a.fact_check;
+      const vmap={'verified':['&#10003; Verified','verdict-verified'],'mismatch':['&#10007; Mismatch','verdict-mismatch'],'partial':['~ Partial','verdict-partial']};
+      const [vlabel,vcls]=vmap[fc.overall_verdict]||['? Unknown','verdict-unverifiable'];
+      verdictHtml=`<span class="verdict-badge ${vcls}" title="${fc.claims.length} claim(s) checked">${vlabel}</span>`;
+    }
+
+    // Fact-check detail block
+    let fcHtml='';
+    if(a.fact_check&&a.fact_check.claims.length){
+      const fc=a.fact_check;
+      const claimsHtml=fc.claims.map(c=>{
+        const color=c.verdict==='verified'?'var(--green)':c.verdict==='mismatch'?'var(--red)':'var(--text-3)';
+        const icon=c.verdict==='verified'?'&#10003;':c.verdict==='mismatch'?'&#10007;':'?';
+        return `<div class="fc-claim"><span style="color:${color};font-weight:700;flex-shrink:0">${icon}</span><div><div style="color:var(--text-2)">&ldquo;${esc(c.claim)}&rdquo;</div>${c.reality?`<div style="color:var(--text-3);font-style:italic;margin-top:2px">&rarr; ${esc(c.reality)}</div>`:''}</div></div>`;
+      }).join('');
+      const sources=fc.claims.flatMap(c=>c.sources||[]).filter(Boolean);
+      fcHtml=`<div class="fc-detail ${fc.overall_verdict}">${claimsHtml}${sources.length?`<div class="fc-sources">Sources: ${esc(sources.slice(0,3).join(', '))}</div>`:''}</div>`;
+    }
+
     return `<div class="post">
       <div class="post-head">
         <div class="avatar ${cls}">${esc(initial)}</div>
         <div class="post-meta">
           <div class="post-name">${esc(name)}</div>
-          <div class="post-sub">${badge(a.action_type)} <span>${esc(a.platform||'')}</span> <span>R${a.round||0}</span></div>
+          <div class="post-sub">${badge(a.action_type)}${verdictHtml} <span>${esc(a.platform||'')}</span> <span>R${a.round||0}</span></div>
         </div>
       </div>
-      ${actionInfo}${body}
+      ${actionInfo}${body}${fcHtml}
     </div>`;
   }).join('');
 }
@@ -367,6 +520,20 @@ function renderAgents(){
     const n=a.agent_name||'agent_'+a.agent_id;
     if(!agentActions[n]) agentActions[n]=[];
     agentActions[n].push(a);
+  });
+  // Count searches per agent
+  const agentSearches={};
+  realActions().filter(a=>['SEARCH_WEB','search_web'].includes(a.action_type)).forEach(a=>{
+    const n=a.agent_name||'agent_'+a.agent_id;
+    agentSearches[n]=(agentSearches[n]||0)+1;
+  });
+  // Per-agent fact-check accuracy
+  const agentFC={};
+  realActions().filter(a=>a.fact_check).forEach(a=>{
+    const n=a.agent_name||'agent_'+a.agent_id;
+    if(!agentFC[n]) agentFC[n]={total:0,verified:0};
+    agentFC[n].total++;
+    if(a.fact_check.overall_verdict==='verified') agentFC[n].verified++;
   });
 
   el.innerHTML=profiles.map(p=>{
@@ -413,6 +580,8 @@ function renderAgents(){
       </div>
       <div class="agent-summary">
         <div><span class="agent-stat-label">Acts</span> <span class="agent-stat-val">${myActions.length}</span></div>
+        ${(agentSearches[p.name]||0)>0?`<div><span class="agent-stat-label">🔍</span> <span class="agent-stat-val search-stat">${agentSearches[p.name]}</span></div>`:''}
+        ${(agentFC[p.name]&&agentFC[p.name].total>0)?`<div><span class="agent-stat-label">Accuracy</span> <span class="agent-stat-val">${Math.round((agentFC[p.name].verified/agentFC[p.name].total)*100)}%</span></div>`:''}
         <div><span class="agent-stat-label">Bias</span> <span class="agent-stat-val">${bias>0?'+':''}${bias.toFixed(1)}</span></div>
         <div class="bias-bar"><div class="bias-fill ${bclass}" style="${bstyle}"></div></div>
         <div class="expand-hint">click to expand</div>
@@ -479,7 +648,93 @@ function renderConfig(){
   el.innerHTML=html;
 }
 
+// ── Render Fact Checks ──
+function renderFactChecks(){
+  const el=document.getElementById('tab-fact-checks');
+  const checked=realActions().filter(a=>a.fact_check);
+  if(!checked.length){el.innerHTML='<div class="empty-state">No fact-checks yet</div>';return;}
+
+  const total=checked.length;
+  const verified=checked.filter(a=>a.fact_check.overall_verdict==='verified').length;
+  const mismatched=checked.filter(a=>a.fact_check.overall_verdict==='mismatch').length;
+  const partial=total-verified-mismatched;
+
+  let html=`<div style="padding:14px 0;border-bottom:1px solid var(--border-light)">
+    <div style="font-size:11px;font-weight:600;margin-bottom:8px">ACCURACY SUMMARY</div>
+    <div style="display:flex;gap:12px;font-family:var(--mono);font-size:12px">
+      <span style="color:var(--green)">&#10003; ${verified}</span>
+      <span style="color:var(--red)">&#10007; ${mismatched}</span>
+      <span style="color:var(--amber)">~ ${partial}</span>
+      <span style="color:var(--text-3)">${total} checked</span>
+    </div>
+  </div>`;
+
+  // Per-agent accuracy
+  const agentAcc={};
+  checked.forEach(a=>{
+    const name=a.agent_name||'unknown';
+    if(!agentAcc[name]) agentAcc[name]={total:0,verified:0,mismatch:0};
+    agentAcc[name].total++;
+    if(a.fact_check.overall_verdict==='verified') agentAcc[name].verified++;
+    if(a.fact_check.overall_verdict==='mismatch') agentAcc[name].mismatch++;
+  });
+
+  html+='<div style="padding:14px 0;border-bottom:1px solid var(--border-light)">';
+  html+='<div style="font-size:11px;font-weight:600;margin-bottom:8px">PER-AGENT ACCURACY</div>';
+  Object.entries(agentAcc).sort((a,b)=>b[1].mismatch-a[1].mismatch).forEach(([name,stats])=>{
+    const pct=stats.total?Math.round((stats.verified/stats.total)*100):0;
+    const color=pct>=80?'var(--green)':pct>=50?'var(--amber)':'var(--red)';
+    html+=`<div style="display:flex;justify-content:space-between;padding:4px 0;font-size:11px">
+      <span>${esc(name)}</span>
+      <span style="font-family:var(--mono);color:${color}">${pct}% (${stats.verified}/${stats.total})</span>
+    </div>`;
+  });
+  html+='</div>';
+
+  // All claims list, mismatches first
+  html+='<div style="padding:14px 0"><div style="font-size:11px;font-weight:600;margin-bottom:8px">ALL CLAIMS</div>';
+  const sorted=[...checked].sort((a,b)=>{
+    const order={mismatch:0,partial:1,verified:2};
+    return (order[a.fact_check.overall_verdict]||3)-(order[b.fact_check.overall_verdict]||3);
+  });
+  sorted.forEach(a=>{
+    const fc=a.fact_check;
+    const name=a.agent_name||'unknown';
+    fc.claims.forEach(c=>{
+      const icon=c.verdict==='verified'?'&#10003;':c.verdict==='mismatch'?'&#10007;':'?';
+      const color=c.verdict==='verified'?'var(--green)':c.verdict==='mismatch'?'var(--red)':'var(--text-3)';
+      html+=`<div style="padding:8px 0;border-bottom:1px solid var(--border-light);font-size:11px">
+        <div style="display:flex;gap:6px;align-items:baseline">
+          <span style="color:${color};font-weight:700">${icon}</span>
+          <span style="font-weight:600">${esc(name)}</span>
+          <span style="color:var(--text-3);font-family:var(--mono)">R${a.round||0}</span>
+        </div>
+        <div style="margin-top:4px;color:var(--text-2)">&ldquo;${esc(c.claim)}&rdquo;</div>
+        ${c.reality?`<div style="margin-top:2px;color:var(--text-3);font-style:italic">&rarr; ${esc(c.reality)}</div>`:''}
+      </div>`;
+    });
+  });
+  html+='</div>';
+
+  el.innerHTML=html;
+}
+
 // ── Render Report ──
+function renderSeeds(seeds){
+  const el=document.getElementById('tab-seeds');
+  if(!seeds||!seeds.length){
+    el.innerHTML='<div class="empty-state">No seed posts (LLM-generated seeds used)</div>';
+    return;
+  }
+  el.innerHTML=seeds.map((s,i)=>{
+    const content=esc(s.content||'');
+    const aid=s.poster_agent_id!=null?s.poster_agent_id:i;
+    return `<div style="padding:10px 16px;border-bottom:1px solid var(--border-light)">
+      <div style="font-size:10px;font-family:var(--mono);color:var(--text-3);margin-bottom:4px">Agent ${aid}</div>
+      <div style="font-size:12px;line-height:1.5">${content}</div>
+    </div>`;
+  }).join('');
+}
 function renderReport(text){
   const el=document.getElementById('tab-report');
   if(!text||text==='Report not generated yet.'){
@@ -573,16 +828,23 @@ function renderStats(status){
   if(bd.create_comment) parts.push(`<span class="pd-item">Comments <span class="pd-val">${bd.create_comment}</span></span>`);
   if(bd.follow) parts.push(`<span class="pd-item">Follows <span class="pd-val">${bd.follow}</span></span>`);
   if(bd.do_nothing) parts.push(`<span class="pd-item">Idle <span class="pd-val">${bd.do_nothing}</span></span>`);
+  // Count web searches from actions
+  const searchTotal=realActions().filter(a=>['SEARCH_WEB','search_web'].includes(a.action_type)).length;
+  if(searchTotal) parts.push(`<span class="pd-item">🔍 <span class="pd-val search-stat">${searchTotal}</span></span>`);
+  const fcTotal=realActions().filter(a=>a.fact_check).length;
+  const fcVerified=realActions().filter(a=>a.fact_check&&a.fact_check.overall_verdict==='verified').length;
+  if(fcTotal) parts.push(`<span class="pd-item">&#10003;&#10007; <span class="pd-val">${fcVerified}/${fcTotal}</span></span>`);
   detailEl.innerHTML=parts.join('');
 }
 
 // ── Fetch Loop ──
 async function fetchAll(){
   try{
-    const [aR,pR,cR,sR,rR]=await Promise.all([
-      fetch(API+'/api/actions'),fetch(API+'/api/profiles'),
-      fetch(API+'/api/config'),fetch(API+'/api/status'),
-      fetch(API+'/api/report'),
+    const base=activeSim?API+'/api/simulations/'+activeSim:API+'/api';
+    const [aR,pR,cR,sR,rR,seedR]=await Promise.all([
+      fetch(base+'/actions'),fetch(base+'/profiles'),
+      fetch(base+'/config'),fetch(base+'/status'),
+      fetch(base+'/report'),fetch(base+'/seeds'),
     ]);
     actions=await aR.json();
     const p=await pR.json();
@@ -593,19 +855,47 @@ async function fetchAll(){
     config=await cR.json();
     const status=await sR.json();
     const report=await rR.text();
+    const seeds=await seedR.json().catch(()=>[]);
 
     if(config.simulation_id) document.getElementById('sim-id').textContent=config.simulation_id;
 
     renderStats(status);
     renderFeed();
     renderAgents();
+    renderSeeds(seeds);
     renderConfig();
+    renderFactChecks();
     renderReport(report);
   }catch(e){console.warn('fetch:',e)}
 }
 
 fetchAll();
 setInterval(fetchAll,3000);
+
+// ── Resizer drag ──
+(function(){
+  const resizer=document.getElementById('resizer');
+  const sidebar=document.querySelector('.sidebar');
+  let dragging=false,startX,startW;
+  resizer.addEventListener('mousedown',e=>{
+    dragging=true;startX=e.clientX;startW=sidebar.offsetWidth;
+    resizer.classList.add('dragging');
+    document.body.style.cursor='col-resize';
+    document.body.style.userSelect='none';
+  });
+  document.addEventListener('mousemove',e=>{
+    if(!dragging)return;
+    const dx=startX-e.clientX;
+    sidebar.style.width=Math.max(200,startW+dx)+'px';
+  });
+  document.addEventListener('mouseup',()=>{
+    if(!dragging)return;
+    dragging=false;
+    resizer.classList.remove('dragging');
+    document.body.style.cursor='';
+    document.body.style.userSelect='';
+  });
+})();
 })();
 </script>
 </body>

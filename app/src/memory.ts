@@ -37,6 +37,32 @@ export function getMemoryPath(): string {
 	return MEMORY_FILE;
 }
 
+// -- USER PROFILE --
+
+const USER_FILE = join(X_LENS_DIR, "USER.md");
+
+export function readUser(): string {
+	ensureDir(X_LENS_DIR);
+	if (!existsSync(USER_FILE)) return "(no user profile yet)";
+	const content = readFileSync(USER_FILE, "utf-8").trim();
+	return content || "(no user profile yet)";
+}
+
+export function writeUser(content: string): void {
+	ensureDir(X_LENS_DIR);
+	writeFileSync(USER_FILE, content, "utf-8");
+}
+
+export function appendUser(content: string): void {
+	ensureDir(X_LENS_DIR);
+	const existing = existsSync(USER_FILE) ? readFileSync(USER_FILE, "utf-8") : "";
+	writeFileSync(USER_FILE, existing + "\n" + content, "utf-8");
+}
+
+export function getUserPath(): string {
+	return USER_FILE;
+}
+
 // -- SESSION PERSISTENCE --
 // Stores full AgentMessages (user, assistant, toolResult) as JSONL
 // This allows the agent to restore its full conversation context on restart,

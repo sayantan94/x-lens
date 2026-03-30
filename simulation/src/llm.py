@@ -77,8 +77,18 @@ def completion(messages: list[dict], temperature: float = 0.7,
     if response_format:
         kwargs["response_format"] = response_format
 
-    response = litellm.completion(**kwargs)
-    return response.choices[0].message.content
+    import time
+
+    for attempt in range(5):
+        try:
+            response = litellm.completion(**kwargs)
+            return response.choices[0].message.content
+        except litellm.RateLimitError:
+            if attempt == 4:
+                raise
+            wait = 2 ** attempt * 10  # 10s, 20s, 40s, 80s
+            print(f"Rate limited, retrying in {wait}s (attempt {attempt + 1}/5)...", file=__import__('sys').stderr)
+            time.sleep(wait)
 
 
 def get_camel_model():

@@ -1,9 +1,15 @@
 #!/usr/bin/env python3
-"""Generate simulation configuration from profiles and scenario."""
+"""Generate simulation configuration from profiles and scenario.
+
+Fixed bugs:
+- BUG#3: Default active_hours now start at 7 AM minimum (no midnight-only agents)
+- BUG#3: Simulation hours scaled to match max_rounds so no wasted rounds
+"""
 
 import argparse
 import json
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -16,16 +22,23 @@ You MUST output valid JSON. No other text."""
 
 
 def build_agent_configs(profiles: list[AgentProfile]) -> list[dict]:
-    """Build per-agent activity configs from profiles."""
+    """Build per-agent activity configs from profiles.
+
+    FIX#3: Ensure all agents have some overlap with market hours (7-23).
+    High activity agents get wider windows, low activity get narrower,
+    but EVERYONE is active during at least some market hours.
+    """
     configs = []
     for p in profiles:
-        # High activity agents are active more hours
         if p.activity_level > 0.7:
+            # Power posters: 7 AM - 11 PM (full market day + after hours)
             active_hours = list(range(7, 24))
         elif p.activity_level > 0.4:
-            active_hours = list(range(9, 22))
+            # Regular participants: 8 AM - 9 PM (core + some evening)
+            active_hours = list(range(8, 22))
         else:
-            active_hours = list(range(10, 18))
+            # Lurkers: 9 AM - 5 PM (market hours only)
+            active_hours = list(range(9, 18))
 
         configs.append({
             "agent_id": p.user_id,
@@ -68,12 +81,17 @@ Rules:
 - initial_posts: 2-5 seed posts from different agents who would realistically post first
 - poster_agent_id must match an agent's user_id from the list above
 - Pick agents whose archetype makes them likely to post first (journalists, influencers, active traders)
-- total_simulation_hours: shorter for fast-moving events (earnings=48h), longer for macro shifts (96h)"""
+- total_simulation_hours: shorter for fast-moving events (earnings=48h), longer for macro shifts (96h)
+- minutes_per_round: use 30 for fast events, 60 for slow-burn narratives"""
 
 
 def parse_config(raw: str, sim_id: str, scenario: str, profiles: list[AgentProfile]) -> SimulationConfig:
     """Parse LLM response into SimulationConfig."""
-    data = json.loads(raw)
+    text = raw.strip()
+    if text.startswith("```"):
+        text = re.sub(r"^```(?:json)?\s*\n?", "", text)
+        text = re.sub(r"\n?```\s*$", "", text)
+    data = json.loads(text)
     tc_data = data.get("time_config", {})
     ec_data = data.get("event_config", {})
 
@@ -86,17 +104,23 @@ def parse_config(raw: str, sim_id: str, scenario: str, profiles: list[AgentProfi
     )
 
 
-def generate(sim_id: str, scenario: str, profiles: list[AgentProfile]) -> SimulationConfig:
-    """Generate config by calling the LLM."""
+def generate(sim_id: str, scenario: str, profiles: list[AgentProfile],
+             seed_posts: list[dict] | None = None) -> SimulationConfig:
+    """Generate config by calling the LLM. Uses provided seed_posts if given."""
     raw = completion(
         messages=[
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": build_config_prompt(scenario, profiles)},
         ],
-        response_format={"type": "json_object"},
         temperature=0.3,
     )
-    return parse_config(raw, sim_id, scenario, profiles)
+    config = parse_config(raw, sim_id, scenario, profiles)
+
+    # Override LLM-generated initial_posts with agent-provided seed posts
+    if seed_posts:
+        config.event_config.initial_posts = seed_posts
+
+    return config
 
 
 def main():
@@ -105,12 +129,17 @@ def main():
     parser.add_argument("--scenario", required=True, help="Market scenario")
     parser.add_argument("--sim-id", required=True, help="Simulation ID")
     parser.add_argument("--output", required=True, help="Output path for simulation_config.json")
+    parser.add_argument("--seed-posts", default=None, help="Path to seed_posts.json (overrides LLM-generated seeds)")
     args = parser.parse_args()
 
     profiles_data = json.loads(Path(args.profiles).read_text())
     profiles = [AgentProfile(**p) for p in profiles_data]
 
-    config = generate(args.sim_id, args.scenario, profiles)
+    seed_posts = None
+    if args.seed_posts:
+        seed_posts = json.loads(Path(args.seed_posts).read_text())
+
+    config = generate(args.sim_id, args.scenario, profiles, seed_posts=seed_posts)
 
     output_path = Path(args.output)
     output_path.parent.mkdir(parents=True, exist_ok=True)

@@ -20,7 +20,7 @@ A persona-based autonomous AI agent with browser capabilities. Adding a new doma
 |---|---|
 | **LLM Providers** | Anthropic (direct API), AWS Bedrock (20+ model providers) |
 | **Personas** | `trader` (~40 skills), `job-finder` (4 skills), `predictor` (1 skill), or create your own |
-| **Tools** | Browser (6), Shell, HTTP, Memory (3), Scheduling (3) — 15 total |
+| **Tools** | Browser (6), Shell, HTTP, Memory (3), User Profile (2), Session Search (1), Skills (3), Scheduling (3) — 21 total |
 | **Modes** | Command (single task), REPL (interactive), Daemon (24/7 autonomous), Telegram (group chat) |
 | **Skills format** | Markdown with YAML frontmatter, optional `references/` directory for progressive disclosure |
 | **Browser** | Persistent Chromium via Playwright, per-persona profiles, headless or visible |
@@ -533,7 +533,17 @@ The agent will search for news, read the skill instructions, and call `simulate.
   --port 5055
 ```
 
-**Dashboard:** Opens at `http://localhost:5055` showing live pipeline progress, agent feed, and the generated report.
+**Dashboard:** Opens at `http://localhost:5055` showing live pipeline progress, agent feed, and the generated report. Parallel simulations reuse the same dashboard — a sim picker lets you switch between running and completed sims.
+
+**Flags:**
+
+| Flag | Description |
+|------|-------------|
+| `--fact-check` | Enable automatic fact-checking of agent posts via Nova web grounding |
+| `--fact-check-rate 0.5` | Fraction of posts to fact-check (0.0-1.0, saves API cost) |
+| `--web-search` | Enable agents to search the web during simulation |
+| `--context-file path` | Inject raw market data (OI, news, regime) into agent context |
+| `--seed-posts path` | Provide hand-crafted seed posts instead of LLM-generated ones |
 
 ### Simulation Output
 
@@ -590,15 +600,56 @@ Browse results in your browser at **http://localhost:3456/jobs** — a sortable,
 | `post-ranking` | Score and rank posts by relevance |
 | `linkedin-login` | Handle authentication and 2FA |
 
+## Closed Learning Loop
+
+x-lens has a built-in learning loop — it saves knowledge from experience, recalls past sessions, and creates skills autonomously.
+
+### Three Memory Layers
+
+| Layer | File | Purpose |
+|-------|------|---------|
+| **Memory** | `~/.x-lens/MEMORY.md` | Environment and project facts — tool quirks, API conventions, codebase patterns |
+| **User Profile** | `~/.x-lens/USER.md` | Who you are — preferences, communication style, expertise, timezone, workflow habits |
+| **Session History** | `~/.x-lens/sessions.db` | SQLite database with FTS5 full-text search across all past conversations |
+
+### Autonomous Behaviors
+
+The agent proactively saves learnings without being asked:
+
+- **Corrected?** Saves the correction to memory or user profile so it doesn't repeat the mistake
+- **Complex task succeeded?** Creates a reusable skill from the workflow (5+ tool calls)
+- **Skill outdated?** Patches it immediately during use
+- **User references prior work?** Searches past sessions via FTS5 before asking them to repeat
+
+### Session Search
+
+All conversations are stored in SQLite with full-text search. The agent uses the `session_search` tool to recall past context:
+
+```
+> remember when we fixed that Docker issue?
+[agent searches sessions.db, finds matching conversation, returns context]
+```
+
+### Self-Improving Skills
+
+The agent can create and improve skills from experience:
+
+- `skill_create` — saves a successful workflow as a reusable skill in `~/.x-lens/skills/`
+- `skill_patch` — updates an existing skill when it finds issues during use
+- User-created skills are loaded alongside repo skills (lowest priority, no override)
+
 ## Memory & Persistence
 
 x-lens stores persistent data in `~/.x-lens/`:
 
 | What | Path | Description |
 |------|------|-------------|
-| Memory | `~/.x-lens/MEMORY.md` | Agent's long-term memory — preferences, URLs, recurring info. Read at startup, written via `memory_write`/`memory_append` tools. |
+| Memory | `~/.x-lens/MEMORY.md` | Agent's long-term memory — environment facts, tool quirks, project patterns. |
+| User Profile | `~/.x-lens/USER.md` | User preferences, expertise, communication style, role. |
+| Session DB | `~/.x-lens/sessions.db` | SQLite + FTS5 database of all past conversations (searchable). |
 | Session (REPL) | `~/.x-lens/sessions/context.jsonl` | REPL conversation history. Resumed on next run. Use `--new` to clear. |
 | Session (daemon) | `~/.x-lens/sessions/<persona>.jsonl` | Per-persona daemon sessions. Persist across daemon restarts. |
+| User Skills | `~/.x-lens/skills/` | Agent-created skills from successful workflows. |
 | Jobs | `~/.x-lens/jobs.json` | Agent-managed scheduled jobs for the daemon. |
 | Daemon log | `~/.x-lens/daemon.log` | Daemon stdout/stderr when running via launchd. |
 | Browser profiles | `~/.x-lens/browser-profiles/<persona>/` | Per-persona Chromium profiles — cookies, auth, localStorage isolated per persona. |
@@ -623,7 +674,7 @@ If port 3456 is busy, it automatically tries the next available port (up to 3465
 
 ## Tools
 
-The agent has 15 tools available (12 core + 3 scheduling):
+The agent has 21 tools available:
 
 | Tool | Description |
 |------|-------------|
@@ -639,6 +690,12 @@ The agent has 15 tools available (12 core + 3 scheduling):
 | `memory_read` | Read persistent memory |
 | `memory_write` | Write/replace persistent memory |
 | `memory_append` | Append to persistent memory |
+| `user_write` | Write/replace user profile |
+| `user_append` | Append to user profile |
+| `session_search` | Search past conversations via FTS5 |
+| `skill_read` | Load a skill's full instructions |
+| `skill_create` | Create a new skill from experience |
+| `skill_patch` | Update an existing skill's instructions |
 | `schedule_create` | Create a scheduled job (cron/interval/continuous) |
 | `schedule_delete` | Delete a scheduled job |
 | `schedule_list` | List all scheduled jobs with status |
@@ -658,9 +715,10 @@ x-lens/
 │       ├── runner.ts        # Command mode (single task)
 │       ├── repl.ts          # Interactive REPL with session persistence
 │       ├── browser.ts       # Playwright browser controller
-│       ├── tools.ts         # Agent tools (browser, shell, fetch, memory, scheduling)
-│       ├── skills.ts        # Skill loader with persona support
-│       ├── memory.ts        # Memory & session persistence
+│       ├── tools.ts         # Agent tools (browser, shell, fetch, memory, user profile, session search, skills, scheduling)
+│       ├── skills.ts        # Skill loader with persona support + user-created skills
+│       ├── memory.ts        # Memory & user profile persistence
+│       ├── session-store.ts # SQLite + FTS5 session store for cross-session search
 │       ├── daemon.ts        # Background daemon with job scheduling
 │       ├── job-store.ts     # Persistent job store (~/.x-lens/jobs.json)
 │       ├── session-manager.ts # Per-persona session persistence
@@ -700,16 +758,18 @@ npm run clean && npm run build
 ## How It Works
 
 1. You give the agent a task (via CLI or REPL)
-2. The agent detects the active persona and loads the corresponding skills
+2. The agent detects the active persona and loads the corresponding skills (repo + user-created)
 3. It matches your intent to a skill via triggers and description, or handles it freestyle
 4. It uses its tools to accomplish the task:
    - **Browser** — navigate, click, type, scroll, screenshot, evaluate JS, web search
    - **Shell** — run commands and scripts
    - **Fetch** — HTTP requests for APIs
    - **Memory** — read/write persistent notes across sessions
+   - **Session Search** — recall context from past conversations via FTS5
 5. The browser uses a persistent Chrome profile, so it stays logged into your accounts
-6. Sessions are preserved — pick up where you left off, or use `--new` to start fresh
-7. The agent reports back with results rendered as rich terminal markdown
+6. Sessions are preserved in SQLite — pick up where you left off, or use `--new` to start fresh
+7. The agent autonomously saves learnings (memory, user profile, skills) as it works
+8. The agent reports back with results rendered as rich terminal markdown
 
 ## Disclaimer
 

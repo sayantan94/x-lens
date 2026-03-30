@@ -10,7 +10,7 @@ class AgentProfile(BaseModel):
     username: str
     name: str
     bio: str = Field(max_length=500)
-    persona: str = Field(max_length=5000)
+    persona: str = Field(max_length=8000)
     age: int = 30
     gender: str = "male"
     mbti: str = "INTJ"
@@ -39,9 +39,14 @@ class AgentProfile(BaseModel):
             "interested_topics": self.interested_topics,
         }
 
-    def to_twitter_format(self) -> dict:
+    def to_twitter_format(self, scenario: str = "", context: str = "") -> dict:
         """Convert to OASIS Twitter CSV row format."""
-        user_char = f"{self.bio} {self.persona}".replace("\n", " ").replace("\r", " ")
+        parts = [self.persona]
+        if context:
+            parts.insert(0, f"RAW MARKET DATA:\n{context[:6000]}")
+        elif scenario:
+            parts.insert(0, f"MARKET CONTEXT: {scenario[:3000]}")
+        user_char = " ".join(parts).replace("\n", " ").replace("\r", " ")
         return {
             "user_id": self.user_id,
             "name": self.name,

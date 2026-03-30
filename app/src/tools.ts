@@ -258,6 +258,84 @@ function createMemoryAppendTool(): AgentTool {
   };
 }
 
+function createUserWriteTool(): AgentTool {
+  return {
+    name: "user_write",
+    label: "Write User Profile",
+    description:
+      "Save information about the USER to a persistent profile. Use for: preferences, communication style, expertise areas, timezone, role, workflow habits. This is separate from memory (which is for environment/project facts).",
+    parameters: Type.Object({
+      content: Type.String({ description: "Full user profile content (replaces existing)" }),
+    }),
+    execute: async (_toolCallId, params: any) => {
+      const { writeUser } = await import("./memory.js");
+      writeUser(params.content);
+      return textResult("User profile updated.");
+    },
+  };
+}
+
+function createUserAppendTool(): AgentTool {
+  return {
+    name: "user_append",
+    label: "Append User Profile",
+    description:
+      "Append a fact about the user to their persistent profile without replacing existing content.",
+    parameters: Type.Object({
+      content: Type.String({ description: "Fact to append to user profile" }),
+    }),
+    execute: async (_toolCallId, params: any) => {
+      const { appendUser } = await import("./memory.js");
+      appendUser(params.content);
+      return textResult("Appended to user profile.");
+    },
+  };
+}
+
+function createSessionSearchTool(): AgentTool {
+  return {
+    name: "session_search",
+    label: "Search Past Sessions",
+    description:
+      "Search across all past conversations for relevant context. Use when the user references prior work ('remember when...', 'last time', 'we did this before') or when you need context from a previous session. Returns matching conversation excerpts grouped by session.",
+    parameters: Type.Object({
+      query: Type.String({
+        description: "Search query — use natural language keywords (e.g., 'kubernetes deployment fix', 'OI analysis SPY')",
+      }),
+      persona: Type.Optional(
+        Type.String({ description: "Filter to a specific persona (e.g., 'trader')" }),
+      ),
+    }),
+    execute: async (_toolCallId, params: any) => {
+      const { searchSessions } = await import("./session-store.js");
+
+      const results = searchSessions(params.query, {
+        persona: params.persona,
+        limit: 5,
+      });
+
+      if (results.length === 0) {
+        return textResult("No matching past sessions found.");
+      }
+
+      const sections = results.map((r) => {
+        const date = new Date(r.startedAt).toISOString().split("T")[0];
+        const title = r.title || "(untitled)";
+        const header = `### Session: ${title} [${date}] (${r.persona || "default"})`;
+        const msgs = r.matchingMessages
+          .slice(0, 5)
+          .map((m) => `**${m.role}:** ${m.content.slice(0, 500)}`)
+          .join("\n\n");
+        return `${header}\n\n${msgs}`;
+      });
+
+      return textResult(
+        `Found ${results.length} matching session(s):\n\n${sections.join("\n\n---\n\n")}`,
+      );
+    },
+  };
+}
+
 function createWebSearchTool(browser: BrowserController): AgentTool {
   return {
     name: "web_search",
@@ -348,6 +426,82 @@ function createSkillReadTool(skills: Skill[]): AgentTool {
       if (skill.baseDir) parts.push(`Scripts directory: ${skill.baseDir}`, "");
       parts.push(skill.instructions);
       return textResult(parts.join("\n"));
+    },
+  };
+}
+
+function createSkillCreateTool(): AgentTool {
+  return {
+    name: "skill_create",
+    label: "Create Skill",
+    description:
+      "Create a new skill from a workflow you just completed successfully. Skills are reusable instructions that improve over time. Only create skills for workflows that took 5+ tool calls or that the user might need again.",
+    parameters: Type.Object({
+      name: Type.String({
+        description: "Skill name in kebab-case (e.g., 'k8s-rollout', 'oi-morning-scan')",
+      }),
+      description: Type.String({
+        description: "One-line description of what the skill does",
+      }),
+      triggers: Type.Array(Type.String(), {
+        description: "Keywords that should trigger this skill (e.g., ['kubernetes', 'deploy', 'rollout'])",
+      }),
+      instructions: Type.String({
+        description: "Full markdown instructions for the skill. Be specific — include exact commands, file paths, and decision points.",
+      }),
+    }),
+    execute: async (_toolCallId, params: any) => {
+      const { existsSync, mkdirSync, writeFileSync } = await import("node:fs");
+      const { join } = await import("node:path");
+      const { getUserSkillsDir } = await import("./skills.js");
+
+      const skillDir = join(getUserSkillsDir(), params.name);
+      if (existsSync(skillDir)) {
+        return textResult(`Skill "${params.name}" already exists. Use skill_patch to update it.`);
+      }
+
+      mkdirSync(skillDir, { recursive: true });
+
+      const triggersStr = params.triggers.map((t: string) => t.trim()).join(", ");
+      const content = `---\nname: ${params.name}\ndescription: ${params.description}\ntriggers: [${triggersStr}]\n---\n\n${params.instructions}\n`;
+      writeFileSync(join(skillDir, "skill.md"), content, "utf-8");
+      return textResult(`Skill "${params.name}" created at ${skillDir}/skill.md`);
+    },
+  };
+}
+
+function createSkillPatchTool(): AgentTool {
+  return {
+    name: "skill_patch",
+    label: "Patch Skill",
+    description:
+      "Update an existing skill's instructions. Use when you find a skill is outdated, incomplete, or wrong during use. Prefer this over skill_create for existing skills.",
+    parameters: Type.Object({
+      name: Type.String({ description: "Skill name to patch" }),
+      find: Type.String({ description: "Exact text to find in the skill instructions" }),
+      replace: Type.String({ description: "Replacement text" }),
+    }),
+    execute: async (_toolCallId, params: any) => {
+      const { existsSync, readFileSync, writeFileSync } = await import("node:fs");
+      const { join } = await import("node:path");
+      const { getUserSkillsDir } = await import("./skills.js");
+
+      const userPath = join(getUserSkillsDir(), params.name, "skill.md");
+      const upperPath = join(getUserSkillsDir(), params.name, "SKILL.md");
+      const skillPath = existsSync(userPath) ? userPath : existsSync(upperPath) ? upperPath : null;
+
+      if (!skillPath) {
+        return textResult(`Skill "${params.name}" not found in user skills directory. Only user-created skills can be patched.`);
+      }
+
+      const content = readFileSync(skillPath, "utf-8");
+      if (!content.includes(params.find)) {
+        return textResult(`Could not find the text to replace in ${params.name}. Make sure 'find' matches exactly.`);
+      }
+
+      const updated = content.replace(params.find, params.replace);
+      writeFileSync(skillPath, updated, "utf-8");
+      return textResult(`Skill "${params.name}" patched successfully.`);
     },
   };
 }
@@ -454,7 +608,12 @@ export function createTools(browser: BrowserController, skills: Skill[], jobStor
     createMemoryReadTool(),
     createMemoryWriteTool(),
     createMemoryAppendTool(),
+    createUserWriteTool(),
+    createUserAppendTool(),
+    createSessionSearchTool(),
     createSkillReadTool(skills),
+    createSkillCreateTool(),
+    createSkillPatchTool(),
   ];
   if (jobStore) {
     tools.push(...createScheduleTools(jobStore, persona));

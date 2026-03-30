@@ -5,8 +5,14 @@ import { createTools } from "./tools.js";
 import { loadSkills, formatSkillsForPrompt } from "./skills.js";
 import { StatusServer } from "./status-server.js";
 import { renderMarkdown, renderError, renderToolStart, renderToolEnd, formatToolLabel, extractResultPreview } from "./render.js";
-import { readMemory } from "./memory.js";
+import { readMemory, readUser } from "./memory.js";
 import { JobStore } from "./job-store.js";
+import {
+	createSession,
+	endSession,
+	insertMessage,
+	incrementSessionCounts,
+} from "./session-store.js";
 
 export interface RunOptions {
 	visible?: boolean;
@@ -36,7 +42,7 @@ function convertToLlm(messages: Message[]): Message[] {
 	);
 }
 
-function buildSystemPrompt(skills: ReturnType<typeof loadSkills>, memory: string): string {
+function buildSystemPrompt(skills: ReturnType<typeof loadSkills>, memory: string, userProfile: string): string {
 	const skillsSection = formatSkillsForPrompt(skills);
 
 	return `You are x-lens, a personal AI agent that helps users accomplish tasks.
@@ -70,8 +76,35 @@ Always report back what you did and the outcome.
 ## Your Memory
 ${memory}
 
-You can save important information using the memory_write or memory_append tools.
-Save things like: user preferences, frequently used URLs, login info hints, recurring tasks.
+## User Profile
+${userProfile}
+
+## Autonomous Learning — IMPORTANT
+
+You have a CLOSED LEARNING LOOP. Use it proactively:
+
+### When to save to MEMORY (environment/project facts):
+- You discover a tool quirk, API convention, or project pattern
+- A command fails and you find the fix — save it so you don't repeat the mistake
+- You learn about the codebase structure, deployment process, or infrastructure
+
+### When to save to USER PROFILE (who the user is):
+- User corrects your communication style ("don't explain so much", "I prefer tables")
+- User shares their role, expertise, timezone, or workflow preferences
+- User says "remember that I..." or "I always..."
+- You notice the user's skill level in a domain (expert in Go, new to React)
+
+### When to create/improve SKILLS:
+- After completing a complex task (5+ tool calls) successfully — save the workflow as a skill
+- When using a skill and finding it outdated or incomplete — patch it immediately
+- When the user teaches you a recurring workflow — capture it as a skill
+
+### When to search past sessions:
+- User says "remember when we...", "last time", "as I mentioned", "we did this before"
+- You need context from a prior conversation to avoid re-doing work
+- Before asking the user to repeat information they may have already given you
+
+Do NOT wait to be asked. Save proactively when any trigger above fires.
 
 ${skillsSection}`;
 }
@@ -86,10 +119,15 @@ export async function runOnce(prompt: string, options: RunOptions = {}): Promise
 
 	const model = resolveModel(options);
 	const memory = readMemory();
+	const userProfile = readUser();
+
+	const modelName = options.model || process.env.X_LENS_MODEL || "anthropic.claude-sonnet-4-20250514-v1:0";
+	const sessionId = `cmd_${Date.now()}`;
+	createSession({ id: sessionId, persona: options.persona || "", model: modelName });
 
 	const agent = new Agent({
 		initialState: {
-			systemPrompt: buildSystemPrompt(skills, memory),
+			systemPrompt: buildSystemPrompt(skills, memory, userProfile),
 			model,
 			thinkingLevel: "off",
 			tools,
@@ -158,6 +196,20 @@ export async function runOnce(prompt: string, options: RunOptions = {}): Promise
 					}
 				}
 			}
+
+			incrementSessionCounts(sessionId, 0, 1);
+		}
+		if (event.type === "message_end") {
+			const msg = event.message as any;
+			if (msg.role === "user" || msg.role === "assistant") {
+				const text = Array.isArray(msg.content)
+					? msg.content.filter((b: any) => b.type === "text").map((b: any) => b.text).join("\n")
+					: String(msg.content || "");
+				if (text.trim()) {
+					insertMessage({ sessionId, role: msg.role, content: text });
+					incrementSessionCounts(sessionId, 1, 0);
+				}
+			}
 		}
 		if (event.type === "agent_end") {
 			if (event.messages?.length) {
@@ -212,6 +264,7 @@ export async function runOnce(prompt: string, options: RunOptions = {}): Promise
 			process.exitCode = 1;
 		}
 	} finally {
+		endSession(sessionId);
 		await browser.close();
 		await status.stop();
 	}

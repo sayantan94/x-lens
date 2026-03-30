@@ -37,6 +37,58 @@ Expected output: JSON with `regime` (bullish/bearish/sideways), `fear_level` (lo
 - **Moderate** (30-60%): Normal conditions.
 - **Low** (< 30%): Complacent market. Watch for surprise moves.
 
+### Step 1.5: News & Sentiment Grounding (Nova Web Search)
+
+Use the Nova Web Grounding tool to fetch real-time news, analyst ratings, and risk factors for the ticker(s) being analyzed. This provides critical context that OI data alone cannot reveal (lawsuits, FDA decisions, earnings surprises, geopolitical impacts, etc.).
+
+**Nova tool location:** `~/Workspace/fintool/x-lens/tools/nova_web_search.py`
+
+**For a single ticker:**
+```bash
+cd ~/Workspace/fintool/x-lens
+python3 tools/nova_web_search.py --ticker {TICKER} --type full
+```
+
+**For put credit spread safety analysis:**
+```bash
+cd ~/Workspace/fintool/x-lens
+python3 tools/nova_web_search.py --ticker {TICKER} --type put_credit_spread
+```
+
+**For multiple tickers:**
+```bash
+cd ~/Workspace/fintool/x-lens
+python3 tools/nova_web_search.py --tickers {TICK1} {TICK2} {TICK3} --type news
+```
+
+**For a custom question:**
+```bash
+cd ~/Workspace/fintool/x-lens
+python3 tools/nova_web_search.py "What are the key risks for AAPL stock in the next 30 days?"
+```
+
+**Available query types:**
+| Type | What It Returns |
+|------|----------------|
+| `news` | Latest 7-day news, price movements, events |
+| `analyst` | Ratings, price targets, upgrades/downgrades |
+| `technicals` | Support/resistance, moving averages, RSI |
+| `options` | Options activity, unusual flow, IV, block trades |
+| `full` | All of the above combined (recommended) |
+| `earnings` | Next earnings date, estimates, last quarter results |
+| `put_credit_spread` | Downside risks, support levels, catalysts, institutional flow |
+
+**How to use the output:**
+- Cross-reference news with OI signals. If OI shows bullish but news reveals a major lawsuit → reduce confidence.
+- Check analyst lowest price target → this often aligns with put support walls.
+- Identify upcoming catalysts (earnings, FDA, ex-div) that could override OI positioning.
+- Look for contradictions: bullish OI + bearish news = potential trap. This is where alpha lives.
+
+**Integration with OI analysis:**
+- Run Nova BEFORE interpreting OI (Step 4) so news context informs your OI reading.
+- If Nova reveals a binary catalyst (FDA, earnings) within the trade's DTE, flag it as a risk.
+- If Nova shows heavy institutional buying/selling, cross-reference with OI delta changes.
+
 ### Step 2: Fetch OI Data
 
 For a single ticker:
@@ -214,7 +266,8 @@ Based on the synthesis:
 - **Call Credit Spread**: Moderately bearish, strong call resistance above, want defined risk
 - **No trade**: Low confluence, conflicting DTEs, or insufficient data quality
 
-**5. Sentiment Cross-Check (if memory has sentiment data)**
+**5. Sentiment Cross-Check (use Nova Web Search from Step 1.5)**
+- Use news and analyst data from Step 1.5 Nova search to validate OI signals.
 - Does social/news sentiment align with OI positioning?
 - Contrarian signal: Heavy bullish sentiment + bearish OI = potential trap
 - Confirmation: Sentiment and OI aligned = higher confidence

@@ -20,13 +20,92 @@ You are using the x-lens social simulation engine — a multi-agent system that 
 
 **Use the all-in-one script.** It handles venv activation, all pipeline steps, and the dashboard. Run it with a SINGLE shell command:
 
+**BEFORE launching, create TWO data files from the data you already gathered:**
+
+**File 1: Raw market data context** — dump ALL OI data, news, and market regime data into a markdown file. This gets injected into every agent's context so they can cite specific numbers:
+
 ```bash
-/Users/sayantan/Documents/Workspace/personal-assist/x-lens/simulation/simulate.sh \
+cat > ~/.x-lens/simulations/context_$$.md << 'EOF'
+## OI Data by DTE
+
+### 3 DTE
+| Strike | Call OI | Put OI | P/C | Net |
+|--------|--------|--------|-----|-----|
+| $595   | 2,100  | 45,000 | 21.4| PUT |
+| $600   | 15,000 | 250,000| 16.7| PUT |
+| $605   | 28,000 | 12,000 | 0.43| CALL|
+[... include ALL strikes with significant OI ...]
+- Max Pain: $600
+- Total OI: 2.4M contracts
+- P/C Ratio: 1.46
+
+### 31 DTE
+[... same format ...]
+
+### 90 DTE
+[... same format ...]
+
+## News & Catalysts
+- [date] headline (source) — bull/bear/neutral
+- [date] headline (source) — bull/bear/neutral
+[... include ALL news you found ...]
+
+## Market Regime
+- VIX: 22.37 (falling from 35)
+- Breadth: 33/100
+- SPY trend: [above/below 50/200 DMA]
+- Sector rotation: [leaders/laggards]
+- Correlation: [risk-on/risk-off signals]
+
+## Price Action
+- Current: $603.15
+- 52W High/Low: $XXX / $XXX
+- Key support: $XXX, $XXX
+- Key resistance: $XXX, $XXX
+- Volume: XX vs avg XX
+EOF
+```
+
+Context file rules:
+- Include EVERY strike with >5K OI, not just the top walls
+- Separate OI data by DTE so agents can argue about specific expiries
+- Include ALL news headlines you found, not just the top 5
+- Include raw numbers — agents will cite them in their posts
+
+**File 2: Seed posts** — debate starters that reference the context data:
+
+```bash
+cat > ~/.x-lens/simulations/seed_posts_$$.json << 'EOF'
+[
+  {"poster_agent_id": 0, "content": "$TICKER breaking news tweet with specific data..."},
+  {"poster_agent_id": 1, "content": "OI analysis tweet citing exact call/put walls, P/C ratio, max pain..."},
+  {"poster_agent_id": 2, "content": "Bear case tweet with specific price levels and risk factors..."},
+  {"poster_agent_id": 3, "content": "Macro context tweet linking VIX, sector rotation, FOMC..."},
+  {"poster_agent_id": 4, "content": "Options flow tweet citing unusual activity, gamma levels..."}
+]
+EOF
+```
+
+Seed post rules:
+- Use REAL data you already collected (OI numbers, price levels, news headlines)
+- Each post should be under 280 chars, like a real tweet
+- Cover multiple angles: bull case, bear case, OI analysis, macro, catalyst
+- poster_agent_id 0-4 maps to the first 5 agents (they'll be assigned during profile generation)
+- Make them provocative enough to spark debate
+
+Then launch:
+
+```bash
+/Users/sayantbh/Workspace/fintool/x-lens/simulation/simulate.sh \
   --scenario "<detailed scenario description including bullish AND bearish arguments>" \
   --count 10 \
-  --max-rounds 30 \
-  --platform twitter \
-  --port 5055
+  --max-rounds 40 \
+  --platform parallel \
+  --port 5055 \
+  --web-search \
+  --fact-check \
+  --seed-posts ~/.x-lens/simulations/seed_posts_$$.json \
+  --context-file ~/.x-lens/simulations/context_$$.md
 ```
 
 **CRITICAL RULES:**
@@ -36,6 +115,9 @@ You are using the x-lens social simulation engine — a multi-agent system that 
 - The script returns IMMEDIATELY — the pipeline runs in the background
 - Tell the user to watch the dashboard for live progress
 - Do NOT fabricate results. If something fails, check the log file.
+- **NEVER kill simulation processes.** Simulations take 15-60 minutes. Do NOT run `kill`, `pkill`, or any command that would terminate simulation/dashboard/worker processes. Let them run to completion.
+- After launching, move on to other tasks. Check `$SIM_DIR/report.md` later or poll `/api/status` for completion.
+- Do NOT wait/block for the simulation to finish. It runs in the background — you can do other work.
 
 **What it does (automatically, in the background):**
 1. Creates a sim directory in `~/.x-lens/simulations/`
@@ -45,6 +127,7 @@ You are using the x-lens social simulation engine — a multi-agent system that 
 5. Runs the multi-agent simulation
 6. Generates the analysis report
 7. Saves report to `$SIM_DIR/report.md`
+8. If `--fact-check` enabled: verifies factual claims in agent posts against live web data
 
 **After launching**, tell the user:
 - Dashboard: `http://localhost:<port>` (shows live pipeline progress)
@@ -58,10 +141,14 @@ You are using the x-lens social simulation engine — a multi-agent system that 
 |------|---------|-------------|
 | `--scenario` | (required) | The market scenario to simulate |
 | `--count` | 10 | Number of agents |
-| `--max-rounds` | 30 | Simulation rounds (1 round ≈ 30-60 min simulated time) |
+| `--seed-posts` | (none) | Path to JSON file with agent-created seed posts (overrides LLM-generated seeds) |
+| `--context-file` | (none) | Path to markdown file with raw OI/news/regime data (injected into every agent's context) |
+| `--max-rounds` | 40 | Max simulation rounds (signal peaks at 30-40, no value beyond) |
 | `--platform` | twitter | `twitter`, `reddit`, or `parallel` (both) |
 | `--port` | 5055 | Dashboard port |
 | `--sim-id` | auto | Custom simulation ID |
+| `--fact-check` | off | Enable automatic fact-checking of agent posts via Nova web grounding |
+| `--fact-check-rate` | 1.0 | Fraction of posts to fact-check (0.0-1.0, saves API cost) |
 
 ### After the Simulation
 
@@ -79,7 +166,7 @@ The script prints the report. Read it and synthesize into an actionable trading 
 Interview agents WHILE the simulation is still running (the script keeps the process alive for 600s after simulation ends):
 
 ```bash
-cd /Users/sayantan/Documents/Workspace/personal-assist/x-lens/simulation && source .venv/bin/activate && python3 -m src.interview \
+cd /Users/sayantbh/Workspace/fintool/x-lens/simulation && source .venv/bin/activate && python3 -m src.interview \
   --sim-dir "$HOME/.x-lens/simulations/<SIM_ID>" \
   --all \
   --prompt "What would change your mind about this trade?"
@@ -123,4 +210,4 @@ cd /Users/sayantan/Documents/Workspace/personal-assist/x-lens/simulation && sour
 - For market events, always include the contrarian view in the scenario description to avoid one-sided simulations
 - The simulation requires an LLM API (configured via `simulation/.env`)
 - Dashboard goes live at step 3 — tell the user to open it while simulation runs
-- Use `--platform twitter` for faster runs, `--platform parallel` for both Twitter+Reddit
+- Use `--platform parallel` for both Twitter+Reddit (default), `--platform twitter` for faster runs

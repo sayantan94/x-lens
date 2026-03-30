@@ -1,9 +1,15 @@
 #!/usr/bin/env python3
-"""Generate simulated market participant profiles from a scenario description."""
+"""Generate simulated market participant profiles from a scenario description.
+
+Fixed bugs:
+- BUG#5: Added anti-hallucination constraints to agent personas
+- Agents are now explicitly told NOT to fabricate prices, news, or events
+"""
 
 import argparse
 import json
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -31,6 +37,16 @@ Generate a diverse cast ensuring:
 - Each persona should have a unique personality, backstory, and reason for their stance
 - Sentiment bias should reflect their natural reaction to this specific scenario
 
+CRITICAL — each persona MUST reference specific data from the scenario:
+- Quote exact OI numbers, strike prices, P/C ratios, max pain levels, call/put walls
+- Reference specific price levels, support/resistance, % from ATH
+- Mention specific market data (VIX, sector breadth, volume vs avg)
+- Include their specific positions (e.g. "holding 50 NVDA $200 calls expiring Mar 21" or "short 500 shares at $195")
+- Their arguments MUST cite the data — not just "I'm bullish" but "the $200 call wall at 240K OI is a gamma magnet"
+
+ANTI-HALLUCINATION RULE — EVERY persona MUST include this constraint in their persona text:
+"GROUND RULES: I ALWAYS use the search_web tool to verify prices, news, earnings dates, and analyst ratings before stating them as fact. I do NOT make up future prices, breaking news, or events that haven't happened. If I want to discuss what COULD happen, I clearly label it as a hypothetical scenario, not a fact. When I see another user make a factual claim, I search to verify it before agreeing or disagreeing."
+
 Output JSON with this exact structure:
 {{
   "agents": [
@@ -39,7 +55,7 @@ Output JSON with this exact structure:
       "username": "lowercase_handle",
       "name": "Full Name",
       "bio": "200 char social media bio",
-      "persona": "2000 char detailed backstory: trading style, experience, why they hold their current view on this scenario, what would change their mind, how they behave on social media, their posting style and language",
+      "persona": "2000 char detailed backstory including: trading style, experience, SPECIFIC positions held, exact data points supporting their view, what price levels or data would change their mind, how they behave on social media, their posting style and language. MUST end with the GROUND RULES statement.",
       "age": 34,
       "gender": "male|female|other",
       "mbti": "ENTJ",
@@ -59,27 +75,119 @@ Fields:
 - activity_level: 0.1 (lurker, rarely posts) to 1.0 (power poster, always online)
 - archetype: one of the archetypes listed above
 - user_id: sequential starting from 0
-- persona: MUST be detailed (1500-2000 chars). Include their history, what positions they hold, why, and how they'd react to this scenario playing out"""
+- persona: MUST be detailed (1500-2000 chars). MUST include specific OI data, price levels, and market data from the scenario. Include their positions, why they hold them, and what data would flip their view. MUST end with the GROUND RULES anti-hallucination statement."""
+
+
+def repair_truncated_json(text: str) -> str:
+    """Attempt to repair JSON truncated by LLM max tokens."""
+    # Try as-is first
+    try:
+        json.loads(text)
+        return text
+    except json.JSONDecodeError:
+        pass
+
+    # Strategy 1: Find last complete object in the agents array
+    # Look for the last complete '},' or '}]' pattern
+    last_complete = -1
+    depth = 0
+    in_string = False
+    escape = False
+    for i, ch in enumerate(text):
+        if escape:
+            escape = False
+            continue
+        if ch == '\\':
+            escape = True
+            continue
+        if ch == '"' and not escape:
+            in_string = not in_string
+            continue
+        if in_string:
+            continue
+        if ch == '{':
+            depth += 1
+        elif ch == '}':
+            depth -= 1
+            if depth == 1:  # Just closed an agent object
+                last_complete = i
+
+    if last_complete > 0:
+        # Truncate to last complete agent, close the array and outer object
+        repaired = text[:last_complete + 1] + '\n  ]\n}'
+        try:
+            json.loads(repaired)
+            return repaired
+        except json.JSONDecodeError:
+            pass
+
+    # Strategy 2: Brute force — keep removing from end until valid
+    for end in range(len(text) - 1, len(text) // 2, -1):
+        chunk = text[:end]
+        for suffix in [']\n}', '\n  ]\n}', '"\n    }\n  ]\n}', '\n}']:
+            try:
+                json.loads(chunk + suffix)
+                return chunk + suffix
+            except json.JSONDecodeError:
+                continue
+
+    raise json.JSONDecodeError("Cannot repair truncated JSON", text, 0)
 
 
 def parse_profiles(raw_response: str) -> list[AgentProfile]:
-    """Parse LLM response into AgentProfile objects."""
-    data = json.loads(raw_response)
+    """Parse LLM response into AgentProfile objects, with truncation repair."""
+    text = raw_response.strip()
+    if text.startswith("```"):
+        text = re.sub(r"^```(?:json)?\s*\n?", "", text)
+        text = re.sub(r"\n?```\s*$", "", text)
+    text = repair_truncated_json(text)
+    data = json.loads(text)
     agents_data = data.get("agents", data if isinstance(data, list) else [])
-    return [AgentProfile(**agent) for agent in agents_data]
+    if not agents_data:
+        print(f"WARNING: No agents found. Keys in response: {list(data.keys()) if isinstance(data, dict) else type(data).__name__}", file=sys.stderr)
+        print(f"WARNING: Raw response (first 500 chars): {text[:500]}", file=sys.stderr)
+
+    # Clamp fields to valid ranges (LLM sometimes generates out-of-bounds)
+    for agent in agents_data:
+        agent["influence_weight"] = max(0.5, min(5.0, agent.get("influence_weight", 1.0)))
+        agent["activity_level"] = max(0.1, min(1.0, agent.get("activity_level", 0.5)))
+        agent["sentiment_bias"] = max(-1.0, min(1.0, agent.get("sentiment_bias", 0.0)))
+    profiles = [AgentProfile(**agent) for agent in agents_data]
+
+    # FIX#5: Inject anti-hallucination constraint if missing from persona
+    ground_rules = (
+        " GROUND RULES: I ALWAYS use the search_web tool to verify prices, news, earnings "
+        "dates, and analyst ratings before stating them as fact. I do NOT make up future "
+        "prices, breaking news, or events that haven't happened. If I discuss what COULD "
+        "happen, I clearly label it as hypothetical, not fact. When I see another user make "
+        "a factual claim, I search to verify it before agreeing or disagreeing."
+    )
+    for p in profiles:
+        if "GROUND RULES" not in p.persona:
+            p.persona = p.persona.rstrip() + ground_rules
+
+    return profiles
 
 
 def generate(scenario: str, count: int = 15) -> list[AgentProfile]:
-    """Generate profiles by calling the LLM."""
-    raw = completion(
-        messages=[
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": build_prompt(scenario, count)},
-        ],
-        response_format={"type": "json_object"},
-        temperature=0.7,
-    )
-    return parse_profiles(raw)
+    """Generate profiles by calling the LLM, with retry on truncation."""
+    attempt_count = count
+    for attempt in range(3):
+        raw = completion(
+            messages=[
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": build_prompt(scenario, attempt_count)},
+            ],
+            temperature=0.7,
+        )
+        profiles = parse_profiles(raw)
+        if len(profiles) >= min(count, 10):
+            print(f"Generated {len(profiles)}/{count} profiles (attempt {attempt+1})", file=sys.stderr)
+            return profiles
+        # Got too few — the JSON was heavily truncated. Try fewer.
+        attempt_count = max(10, attempt_count - 5)
+        print(f"Only got {len(profiles)} profiles, retrying with {attempt_count}...", file=sys.stderr)
+    return profiles
 
 
 def main():
