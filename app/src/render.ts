@@ -127,12 +127,11 @@ export function extractResultPreview(result: unknown, isError: boolean): string 
 		const fullText = textParts.join(" | ");
 		if (!fullText) return "";
 
-		const limit = isError ? 200 : 120;
-		return truncate(fullText.replace(/\n/g, " ↵ "), limit);
+		return fullText.replace(/\n/g, " ↵ ");
 	}
 
 	if (typeof result === "string") {
-		return truncate(result.replace(/\n/g, " ↵ "), 120);
+		return result.replace(/\n/g, " ↵ ");
 	}
 
 	return "";
