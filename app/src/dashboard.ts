@@ -62,6 +62,14 @@ function jsonResponse(res: ServerResponse, data: unknown, status = 200): void {
   res.end(JSON.stringify(data));
 }
 
+export function getHiveDashboardHtml(): string {
+  return DASHBOARD_HTML;
+}
+
+export function handleHiveApi(url: string, res: ServerResponse): boolean {
+  return handleApi(url, res);
+}
+
 function handleApi(url: string, res: ServerResponse): boolean {
   if (url === "/api/events") { jsonResponse(res, queryEvents({ limit: 200 })); return true; }
   if (url === "/api/runs") { jsonResponse(res, queryRuns({ limit: 100 })); return true; }

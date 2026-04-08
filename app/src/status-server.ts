@@ -2,6 +2,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { readFileSync, existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
+import { handleHiveApi, getHiveDashboardHtml } from "./dashboard.js";
 
 export interface StatusUpdate {
   type: "turn_start" | "tool_start" | "tool_end" | "screenshot" | "error" | "alert" | "turn_end";
@@ -1286,6 +1287,16 @@ export class StatusServer {
       if (req.url === "/jobs") {
         res.writeHead(200, { "Content-Type": "text/html" });
         res.end(JOBS_HTML);
+        return;
+      }
+
+      // Hive brain-state dashboard and APIs
+      if (req.url === "/hive") {
+        res.writeHead(200, { "Content-Type": "text/html" });
+        res.end(getHiveDashboardHtml());
+        return;
+      }
+      if (req.url?.startsWith("/api/") && handleHiveApi(req.url, res)) {
         return;
       }
 

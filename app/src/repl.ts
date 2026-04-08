@@ -542,16 +542,14 @@ export async function runInteractive(options: ReplOptions = {}): Promise<void> {
 							const errComp = new Text(chalk.red("  Compaction produced no result. Cannot retry."), 0, 0);
 							insertBeforeEditor(errComp);
 							agentBusy = false;
-							editor.disableSubmit = false;
-							tui.requestRender();
+														tui.requestRender();
 						}
 					}).catch((err) => {
 						const msg = err instanceof Error ? err.message : String(err);
 						const errComp = new Text(chalk.red(`  Emergency compaction failed: ${msg}`), 0, 0);
 						insertBeforeEditor(errComp);
 						agentBusy = false;
-						editor.disableSubmit = false;
-						tui.requestRender();
+												tui.requestRender();
 					});
 				}, 0);
 				return;
@@ -630,8 +628,7 @@ export async function runInteractive(options: ReplOptions = {}): Promise<void> {
 			// Proactive compaction check, then re-enable editor
 			checkAndCompact().finally(() => {
 				agentBusy = false;
-				editor.disableSubmit = false;
-				tui.requestRender();
+								tui.requestRender();
 			});
 		}
 	});
@@ -699,7 +696,7 @@ export async function runInteractive(options: ReplOptions = {}): Promise<void> {
 		insertBeforeEditor(userMd);
 
 		if (agentBusy) {
-			// Check for abort commands first
+			// Abort commands interrupt immediately
 			if (ABORT_COMMANDS.has(trimmed.toLowerCase())) {
 				aborted = true;
 				agent.abort();
@@ -708,21 +705,20 @@ export async function runInteractive(options: ReplOptions = {}): Promise<void> {
 				return;
 			}
 
-			// Steer agent with new instruction
-			const steerNotice = new Text(chalk.yellow("  Steering agent with new instruction..."), 0, 0);
-			insertBeforeEditor(steerNotice);
+			// Queue as follow-up — runs after current task finishes
+			const followUpNotice = new Text(chalk.dim("  Queued — will run after current task"), 0, 0);
+			insertBeforeEditor(followUpNotice);
 			const userMessage: Message = {
 				role: "user",
 				content: [{ type: "text", text: trimmed }],
 				timestamp: Date.now(),
 			};
-			agent.steer(userMessage);
+			agent.followUp(userMessage);
 			return;
 		}
 
 		// Start new agent turn
 		agentBusy = true;
-		editor.disableSubmit = true;
 		turnStartTime = Date.now();
 
 		status.addUpdate({
@@ -754,8 +750,7 @@ export async function runInteractive(options: ReplOptions = {}): Promise<void> {
 				content: message,
 			});
 			agentBusy = false;
-			editor.disableSubmit = false;
-			tui.requestRender();
+						tui.requestRender();
 		}
 	};
 
