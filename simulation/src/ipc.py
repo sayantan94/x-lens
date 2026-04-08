@@ -42,6 +42,19 @@ class IPCServer:
         except (json.JSONDecodeError, FileNotFoundError):
             return None
 
+    def poll_all_commands(self) -> list[dict]:
+        """Drain all pending commands at once (oldest first)."""
+        cmd_files = sorted(self.commands_dir.glob("*.json"))
+        commands = []
+        for cmd_path in cmd_files:
+            try:
+                cmd = json.loads(cmd_path.read_text())
+                cmd_path.unlink()
+                commands.append(cmd)
+            except (json.JSONDecodeError, FileNotFoundError):
+                continue
+        return commands
+
     def send_response(self, command_id: str, result: dict):
         """Write response for a command."""
         resp_path = self.responses_dir / f"{command_id}.json"
@@ -90,3 +103,29 @@ class IPCClient:
             time.sleep(0.5)
 
         return None
+
+    def wait_responses(self, command_ids: list[str], timeout: float = 120) -> list[dict | None]:
+        """Wait for multiple responses concurrently. Returns results in same order as command_ids."""
+        results: dict[str, dict | None] = {cid: None for cid in command_ids}
+        deadline = time.time() + timeout
+
+        while time.time() < deadline:
+            all_done = True
+            for cid in command_ids:
+                if results[cid] is not None:
+                    continue
+                resp_path = self.responses_dir / f"{cid}.json"
+                if resp_path.exists():
+                    try:
+                        data = json.loads(resp_path.read_text())
+                        resp_path.unlink()
+                        results[cid] = data.get("result")
+                    except (json.JSONDecodeError, FileNotFoundError):
+                        all_done = False
+                else:
+                    all_done = False
+            if all_done:
+                break
+            time.sleep(0.5)
+
+        return [results[cid] for cid in command_ids]

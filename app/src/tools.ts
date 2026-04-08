@@ -591,6 +591,203 @@ export function createScheduleTools(store: JobStore, persona?: string): AgentToo
 }
 
 // ---------------------------------------------------------------------------
+// Hive tools — structured data accumulation for trader persona
+// ---------------------------------------------------------------------------
+
+function createHiveRecordTool(): AgentTool {
+  return {
+    name: "hive_record",
+    label: "Record to Hive",
+    description:
+      "Record a structured market event to the Hive timeline. Use for: regime checks, trade signals, alerts, observations. Each event has a type, category, optional ticker, confidence, and a JSON data payload. Events accumulate over time and can be validated later.",
+    parameters: Type.Object({
+      date: Type.Optional(Type.String({ description: "Date (YYYY-MM-DD). Defaults to today." })),
+      type: Type.Optional(Type.String({ description: "Event type — anything: regime_check, signal, trade, earnings, news, note, etc." })),
+      category: Type.Optional(Type.String({ description: "Optional grouping" })),
+      ticker: Type.Optional(Type.String({ description: "Ticker symbol if applicable" })),
+      data: Type.Optional(Type.Record(Type.String(), Type.Unknown(), { description: "Any structured data" })),
+      source_skill: Type.Optional(Type.String({ description: "Skill that produced this" })),
+      confidence: Type.Optional(Type.Number({ description: "Confidence 0.0–1.0" })),
+      summary: Type.Optional(Type.String({ description: "One-line summary" })),
+      tags: Type.Optional(Type.String({ description: "Comma-separated freeform tags" })),
+    }),
+    execute: async (_toolCallId, params: any) => {
+      const { recordEvent } = await import("./hive.js");
+      const id = recordEvent(params);
+      const label = [params.type, params.ticker, params.summary].filter(Boolean).join(" — ");
+      return textResult(`Recorded to Hive: ${label || id.slice(0, 8)} (id: ${id.slice(0, 8)})`);
+    },
+  };
+}
+
+function createHiveQueryTool(): AgentTool {
+  return {
+    name: "hive_query",
+    label: "Query Hive",
+    description:
+      "Query the Hive for past events. Filter by date range, type, category, ticker, or validation status. Returns structured events with their outcomes.",
+    parameters: Type.Object({
+      from: Type.Optional(Type.String({ description: "Start date (YYYY-MM-DD)" })),
+      to: Type.Optional(Type.String({ description: "End date (YYYY-MM-DD)" })),
+      type: Type.Optional(Type.String({ description: "Filter by event type" })),
+      category: Type.Optional(Type.String({ description: "Filter by category" })),
+      ticker: Type.Optional(Type.String({ description: "Filter by ticker" })),
+      validated: Type.Optional(Type.Boolean({ description: "Filter: true=validated only, false=pending only" })),
+      limit: Type.Optional(Type.Number({ description: "Max results (default: 50)" })),
+    }),
+    execute: async (_toolCallId, params: any) => {
+      const { queryEvents } = await import("./hive.js");
+      const events = queryEvents({ ...params, limit: params.limit ?? 50 });
+      if (events.length === 0) return textResult("No events found matching criteria.");
+
+      const lines = events.map((e) => {
+        const outcome = e.validated ? ` → ${e.outcome}` : " [pending]";
+        const ticker = e.ticker ? ` ${e.ticker}` : "";
+        const conf = e.confidence != null ? ` (${(e.confidence * 100).toFixed(0)}%)` : "";
+        return `[${e.date}] ${e.type}${ticker}${conf}: ${e.summary}${outcome}\n  data: ${JSON.stringify(e.data)}`;
+      });
+      return textResult(`Found ${events.length} events:\n\n${lines.join("\n\n")}`);
+    },
+  };
+}
+
+function createHiveValidateTool(): AgentTool {
+  return {
+    name: "hive_validate",
+    label: "Validate Hive Event",
+    description:
+      "Mark a past Hive event with its outcome. Use during retrospective checks to record whether a signal/prediction played out. This builds the pattern database over time.",
+    parameters: Type.Object({
+      id: Type.String({ description: "Event ID to validate (use hive_pending to find IDs)" }),
+      outcome: Type.String({ description: "How the event played out — e.g., correct, incorrect, partial, expired, missed, early, late" }),
+      notes: Type.Optional(Type.String({ description: "Context on the outcome" })),
+    }),
+    execute: async (_toolCallId, params: any) => {
+      const { validateEvent } = await import("./hive.js");
+      const ok = validateEvent(params);
+      if (!ok) return textResult(`Event ${params.id} not found.`);
+      return textResult(`Validated: ${params.id.slice(0, 8)} → ${params.outcome}${params.notes ? ` (${params.notes})` : ""}`);
+    },
+  };
+}
+
+function createHivePendingTool(): AgentTool {
+  return {
+    name: "hive_pending",
+    label: "Pending Validations",
+    description:
+      "Get Hive events that are due for validation — signals, regime checks, and alerts from past days that haven't been checked yet. Use at the start of each run to validate yesterday's predictions.",
+    parameters: Type.Object({
+      older_than_days: Type.Optional(Type.Number({ description: "Only show events older than N days (default: 1)" })),
+    }),
+    execute: async (_toolCallId, params: any) => {
+      const { getPendingValidations } = await import("./hive.js");
+      const events = getPendingValidations({ olderThanDays: params.older_than_days ?? 1 });
+      if (events.length === 0) return textResult("No pending validations. All caught up.");
+
+      const lines = events.map((e) => {
+        const ticker = e.ticker ? ` ${e.ticker}` : "";
+        const conf = e.confidence != null ? ` (${(e.confidence * 100).toFixed(0)}%)` : "";
+        return `[${e.date}] ${e.type}${ticker}${conf}: ${e.summary}\n  id: ${e.id}\n  data: ${JSON.stringify(e.data)}`;
+      });
+      return textResult(`${events.length} events pending validation:\n\n${lines.join("\n\n")}`);
+    },
+  };
+}
+
+function createHiveStatsTool(): AgentTool {
+  return {
+    name: "hive_stats",
+    label: "Hive Stats",
+    description:
+      "Get overall Hive statistics: total events, validation rates, outcomes breakdown, patterns count, and date range. Use to understand the data quality and coverage.",
+    parameters: Type.Object({}),
+    execute: async () => {
+      const { getStats } = await import("./hive.js");
+      const s = getStats();
+      const lines = [
+        `Total events: ${s.totalEvents}`,
+        `Validated: ${s.validated} | Pending: ${s.pending}`,
+        `Date range: ${s.dateRange.earliest || "none"} → ${s.dateRange.latest || "none"}`,
+        ``,
+        `By outcome:`,
+        ...Object.entries(s.byOutcome).map(([k, v]) => `  ${k}: ${v}`),
+        ``,
+        `By type:`,
+        ...Object.entries(s.byType).map(([k, v]) => `  ${k}: ${v}`),
+        ``,
+        `Patterns: ${s.patternCount}`,
+      ];
+      if (s.validated > 0) {
+        const correct = s.byOutcome["correct"] || 0;
+        lines.push(`Overall accuracy: ${((correct / s.validated) * 100).toFixed(1)}%`);
+      }
+      return textResult(lines.join("\n"));
+    },
+  };
+}
+
+function createHivePatternsTool(): AgentTool {
+  return {
+    name: "hive_patterns",
+    label: "Hive Patterns",
+    description:
+      "Query learned patterns from validated Hive events. Patterns track win rates, sample sizes, and conditions. Use to inform confidence levels on new signals.",
+    parameters: Type.Object({
+      category: Type.Optional(Type.String({ description: "Filter by category" })),
+      tags: Type.Optional(Type.String({ description: "Filter by tag (substring match)" })),
+    }),
+    execute: async (_toolCallId, params: any) => {
+      const { queryPatterns } = await import("./hive.js");
+      const patterns = queryPatterns(params);
+      if (patterns.length === 0) return textResult("No patterns learned yet. Keep recording and validating events.");
+
+      const lines = patterns.map((p) => {
+        const wr = p.win_rate != null ? `${(p.win_rate * 100).toFixed(1)}%` : "N/A";
+        return `${p.name} [${p.category}] — win rate: ${wr} (n=${p.sample_size})\n  ${p.description}\n  data: ${JSON.stringify(p.data)}`;
+      });
+      return textResult(`${patterns.length} patterns:\n\n${lines.join("\n\n")}`);
+    },
+  };
+}
+
+function createHivePatternUpsertTool(): AgentTool {
+  return {
+    name: "hive_pattern_upsert",
+    label: "Upsert Hive Pattern",
+    description:
+      "Create or update a learned pattern. Use after validating a batch of events to record what you've learned (e.g., 'VIX regime classifier is 85% accurate over 30 samples').",
+    parameters: Type.Object({
+      id: Type.Optional(Type.String({ description: "Pattern ID to update. Omit to create new." })),
+      name: Type.Optional(Type.String({ description: "Pattern name" })),
+      description: Type.Optional(Type.String({ description: "What this pattern means" })),
+      category: Type.Optional(Type.String({ description: "Optional grouping" })),
+      data: Type.Optional(Type.Record(Type.String(), Type.Unknown(), { description: "Any structured data" })),
+      tags: Type.Optional(Type.String({ description: "Comma-separated freeform tags" })),
+      win_rate: Type.Optional(Type.Number({ description: "Win rate 0.0–1.0" })),
+      sample_size: Type.Optional(Type.Number({ description: "Number of events this is based on" })),
+    }),
+    execute: async (_toolCallId, params: any) => {
+      const { upsertPattern } = await import("./hive.js");
+      const id = upsertPattern(params);
+      return textResult(`Pattern saved: ${params.name} (id: ${id.slice(0, 8)})`);
+    },
+  };
+}
+
+export function createHiveTools(): AgentTool[] {
+  return [
+    createHiveRecordTool(),
+    createHiveQueryTool(),
+    createHiveValidateTool(),
+    createHivePendingTool(),
+    createHiveStatsTool(),
+    createHivePatternsTool(),
+    createHivePatternUpsertTool(),
+  ];
+}
+
+// ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
 
@@ -618,5 +815,7 @@ export function createTools(browser: BrowserController, skills: Skill[], jobStor
   if (jobStore) {
     tools.push(...createScheduleTools(jobStore, persona));
   }
+  // Hive tools for structured data accumulation (all personas — trader is primary user)
+  tools.push(...createHiveTools());
   return tools;
 }

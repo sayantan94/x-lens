@@ -23,13 +23,28 @@ def interview_agent(sim_dir: str, agent_id: int, prompt: str,
 
 def interview_all(sim_dir: str, agent_ids: list[int], prompt: str,
                   platform: str | None = None, timeout: float = 120) -> list[dict]:
-    """Interview multiple agents sequentially."""
-    results = []
+    """Interview multiple agents concurrently.
+
+    Sends all interview commands at once, then waits for all responses
+    in parallel. The server-side IPC loop processes them concurrently
+    via asyncio.gather, so wall-clock time ≈ one LLM call instead of N.
+    """
+    client = IPCClient(sim_dir)
+
+    # Fire all commands at once
+    cmd_ids = []
     for aid in agent_ids:
-        result = interview_agent(sim_dir, aid, prompt, platform, timeout=timeout)
-        if result:
-            results.append(result)
-    return results
+        cid = client.send_command(CommandType.INTERVIEW, {
+            "agent_id": aid,
+            "prompt": prompt,
+            "platform": platform,
+        })
+        cmd_ids.append(cid)
+
+    # Wait for all responses concurrently
+    responses = client.wait_responses(cmd_ids, timeout=timeout)
+
+    return [r for r in responses if r is not None]
 
 
 def main():

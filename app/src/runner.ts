@@ -19,6 +19,7 @@ export interface RunOptions {
 	model?: string;
 	provider?: string;
 	persona?: string;
+	pipe?: boolean;
 }
 
 function resolveModel(options: RunOptions) {
@@ -70,8 +71,32 @@ Tools:
 - Shell for local commands and scripts
 - Fetch for API calls (prefer this over browser for JSON APIs)
 - Web search for Google queries
+- Hive tools for structured data accumulation (see below)
 
 Always report back what you did and the outcome.
+
+## Hive — Structured Knowledge Over Time
+
+You have a persistent Hive database that accumulates structured observations across sessions. Use it to build institutional knowledge.
+
+### When to record (hive_record):
+- You complete an analysis and have a concrete finding (regime state, trade signal, data point)
+- You observe something that should be tracked over time (price level, sentiment shift, macro change)
+- The user asks you to track, monitor, or remember something structured
+- You are NOT sure it matters — record it anyway, cheap to store
+
+### When to validate (hive_validate via hive_pending):
+- Start of a session: check hive_pending for past events that can now be verified
+- The user asks about past predictions or accuracy
+- You have new data that confirms or contradicts a past observation
+
+### When to update patterns (hive_pattern_upsert):
+- After validating 5+ events of the same type, compute the win rate and save as a pattern
+- When you notice a recurring signal or condition across multiple sessions
+
+### What NOT to record:
+- Conversational filler, tool errors, or process steps
+- Things already in memory (MEMORY.md is for general knowledge, hive is for structured time-series data)
 
 ## Your Memory
 ${memory}
@@ -144,6 +169,8 @@ export async function runOnce(prompt: string, options: RunOptions = {}): Promise
 	let hasError = false;
 	const toolStartTimes = new Map<string, { startTime: number; args: Record<string, unknown> }>();
 
+	const isPipe = !!options.pipe;
+
 	agent.subscribe((event: AgentEvent) => {
 		if (event.type === "message_update" && event.assistantMessageEvent.type === "text_delta") {
 			responseText += event.assistantMessageEvent.delta;
@@ -151,7 +178,9 @@ export async function runOnce(prompt: string, options: RunOptions = {}): Promise
 		if (event.type === "tool_execution_start") {
 			const args = (event.args ?? {}) as Record<string, unknown>;
 			toolStartTimes.set(event.toolCallId, { startTime: Date.now(), args });
-			console.log(renderToolStart(event.toolName, args));
+			if (!isPipe) {
+				console.log(renderToolStart(event.toolName, args));
+			}
 			status.addUpdate({
 				type: "tool_start",
 				timestamp: Date.now(),
@@ -168,7 +197,9 @@ export async function runOnce(prompt: string, options: RunOptions = {}): Promise
 			toolStartTimes.delete(event.toolCallId);
 
 			const isErr = !!(event as any).isError;
-			console.log(renderToolEnd(event.toolName, args, durationMs, event.result, isErr));
+			if (!isPipe) {
+				console.log(renderToolEnd(event.toolName, args, durationMs, event.result, isErr));
+			}
 
 			status.addUpdate({
 				type: "tool_end",
@@ -216,7 +247,11 @@ export async function runOnce(prompt: string, options: RunOptions = {}): Promise
 				for (const msg of event.messages) {
 					const errorMsg = (msg as any).errorMessage;
 					if (errorMsg) {
-						console.error(renderError(errorMsg));
+						if (isPipe) {
+							console.error(errorMsg);
+						} else {
+							console.error(renderError(errorMsg));
+						}
 						hasError = true;
 						status.addUpdate({
 							type: "error",
@@ -228,14 +263,28 @@ export async function runOnce(prompt: string, options: RunOptions = {}): Promise
 				}
 			}
 			if (responseText && !hasError) {
-				console.log("\n" + renderMarkdown(responseText));
+				if (isPipe) {
+					// Pipe mode: raw text, no markdown rendering
+					process.stdout.write(responseText);
+				} else {
+					console.log("\n" + renderMarkdown(responseText));
+				}
 			}
 			responseText = "";
 		}
 	});
 
+	// Auto-record run in hive
+	let toolCallCount = 0;
+	const origSubscribe = agent.subscribe((event: AgentEvent) => {
+		if (event.type === "tool_execution_end") toolCallCount++;
+	});
+
 	try {
-		await status.start();
+		const { startRun, endRun } = await import("./hive.js");
+		startRun({ id: sessionId, source: isPipe ? "pipe" : "cli", persona: options.persona, prompt });
+
+		if (!isPipe) await status.start();
 
 		const userMessage: Message = {
 			role: "user",
@@ -260,12 +309,27 @@ export async function runOnce(prompt: string, options: RunOptions = {}): Promise
 			source: "cmd",
 		});
 
+		endRun({
+			id: sessionId,
+			response: responseText.slice(0, 10000),
+			status: hasError ? "error" : "completed",
+			error_message: hasError ? "See session log" : undefined,
+			tool_count: toolCallCount,
+		});
+
 		if (hasError) {
 			process.exitCode = 1;
 		}
+	} catch (err) {
+		try {
+			const { endRun } = await import("./hive.js");
+			endRun({ id: sessionId, response: "", status: "error", error_message: String(err) });
+		} catch { /* ignore hive errors */ }
+		throw err;
 	} finally {
+		origSubscribe();
 		endSession(sessionId);
 		await browser.close();
-		await status.stop();
+		if (!isPipe) await status.stop();
 	}
 }

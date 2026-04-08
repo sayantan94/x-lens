@@ -349,74 +349,118 @@ async def run_platform(platform: str, config: SimulationConfig, profiles: list[A
     return env, agent_graph
 
 
-async def ipc_loop(sim_dir: Path, envs: dict, agent_graphs: dict, agent_names: dict, timeout: int = 600):
-    """Listen for IPC commands (interviews) until timeout."""
+async def _handle_interview(cmd: dict, sim_dir: Path, envs: dict, agent_graphs: dict,
+                            agent_names: dict, server: IPCServer):
+    """Handle a single interview command. Safe to run concurrently with others."""
     from oasis import ActionType, ManualAction
 
+    args = cmd.get("args", {})
+    agent_id = args["agent_id"]
+    prompt = args.get("prompt", "What do you think?")
+    platform = args.get("platform")
+    results = {}
+
+    platforms_to_query = [platform] if platform else list(envs.keys())
+    for plat in platforms_to_query:
+        if plat not in envs or plat not in agent_graphs:
+            continue
+        agent = agent_graphs[plat].get_agent(agent_id)
+        if not agent:
+            continue
+        interview_action = ManualAction(
+            action_type=ActionType.INTERVIEW if hasattr(ActionType, "INTERVIEW") else ActionType.CREATE_POST,
+            action_args={"prompt": prompt},
+        )
+        await envs[plat].step({agent: interview_action})
+
+        # Read response from db trace table
+        db_name = f"{plat}_simulation.db"
+        db_path = str(sim_dir / db_name)
+        conn = sqlite3.connect(db_path)
+        row = conn.execute(
+            "SELECT info FROM trace WHERE user_id = ? ORDER BY rowid DESC LIMIT 1",
+            (agent_id,)
+        ).fetchone()
+        conn.close()
+
+        response_text = ""
+        if row and row[0]:
+            info = json.loads(row[0])
+            response_text = info.get("response", info.get("content", str(info)))
+
+        results[plat] = {
+            "agent_id": agent_id,
+            "agent_name": agent_names.get(agent_id, f"agent_{agent_id}"),
+            "response": response_text,
+        }
+
+    server.send_response(cmd["command_id"], {
+        "agent_id": agent_id,
+        "agent_name": agent_names.get(agent_id, f"agent_{agent_id}"),
+        "platforms": results,
+    })
+
+
+async def ipc_loop(sim_dir: Path, envs: dict, agent_graphs: dict, agent_names: dict, timeout: int = 600):
+    """Listen for IPC commands (interviews) until timeout.
+
+    Drains all pending commands each tick and processes interviews concurrently
+    using asyncio.gather so multiple agents can answer in parallel.
+    """
     server = IPCServer(str(sim_dir))
     last_activity = time.time()
 
     print(f"IPC server listening (timeout={timeout}s)...", file=sys.stderr)
 
     while time.time() - last_activity < timeout:
-        cmd = server.poll_command()
-        if cmd is None:
+        commands = server.poll_all_commands()
+        if not commands:
             await asyncio.sleep(1)
             continue
 
         last_activity = time.time()
-        cmd_type = cmd.get("command_type")
-        args = cmd.get("args", {})
 
-        if cmd_type == CommandType.CLOSE_ENV.value:
-            server.send_response(cmd["command_id"], {"status": "closing"})
+        # Separate close commands from interview commands
+        close_requested = False
+        interview_cmds = []
+
+        for cmd in commands:
+            cmd_type = cmd.get("command_type")
+            if cmd_type == CommandType.CLOSE_ENV.value:
+                server.send_response(cmd["command_id"], {"status": "closing"})
+                close_requested = True
+            elif cmd_type == CommandType.INTERVIEW.value:
+                interview_cmds.append(cmd)
+            elif cmd_type == CommandType.BATCH_INTERVIEW.value:
+                # Expand batch into individual interview commands
+                args = cmd.get("args", {})
+                agent_ids = args.get("agent_ids", [])
+                prompt = args.get("prompt", "What do you think?")
+                platform = args.get("platform")
+                for aid in agent_ids:
+                    interview_cmds.append({
+                        "command_id": f"{cmd['command_id']}__{aid}",
+                        "command_type": CommandType.INTERVIEW.value,
+                        "args": {"agent_id": aid, "prompt": prompt, "platform": platform},
+                    })
+                # Also send a batch-level response with the sub-command ids
+                server.send_response(cmd["command_id"], {
+                    "status": "expanded",
+                    "sub_command_ids": [f"{cmd['command_id']}__{aid}" for aid in agent_ids],
+                })
+
+        # Run all interview commands concurrently
+        if interview_cmds:
+            n = len(interview_cmds)
+            aids = [c["args"]["agent_id"] for c in interview_cmds]
+            print(f"  [IPC] Processing {n} interview(s) concurrently: agents {aids}", file=sys.stderr)
+            await asyncio.gather(*(
+                _handle_interview(cmd, sim_dir, envs, agent_graphs, agent_names, server)
+                for cmd in interview_cmds
+            ))
+
+        if close_requested:
             break
-
-        if cmd_type == CommandType.INTERVIEW.value:
-            agent_id = args["agent_id"]
-            prompt = args.get("prompt", "What do you think?")
-            platform = args.get("platform")
-            results = {}
-
-            platforms_to_query = [platform] if platform else list(envs.keys())
-            for plat in platforms_to_query:
-                if plat not in envs or plat not in agent_graphs:
-                    continue
-                agent = agent_graphs[plat].get_agent(agent_id)
-                if not agent:
-                    continue
-                interview_action = ManualAction(
-                    action_type=ActionType.INTERVIEW if hasattr(ActionType, "INTERVIEW") else ActionType.CREATE_POST,
-                    action_args={"prompt": prompt},
-                )
-                await envs[plat].step({agent: interview_action})
-
-                # Read response from db trace table
-                db_name = f"{plat}_simulation.db"
-                db_path = str(sim_dir / db_name)
-                conn = __import__("sqlite3").connect(db_path)
-                row = conn.execute(
-                    "SELECT info FROM trace WHERE user_id = ? ORDER BY rowid DESC LIMIT 1",
-                    (agent_id,)
-                ).fetchone()
-                conn.close()
-
-                response_text = ""
-                if row and row[0]:
-                    info = json.loads(row[0])
-                    response_text = info.get("response", info.get("content", str(info)))
-
-                results[plat] = {
-                    "agent_id": agent_id,
-                    "agent_name": agent_names.get(agent_id, f"agent_{agent_id}"),
-                    "response": response_text,
-                }
-
-            server.send_response(cmd["command_id"], {
-                "agent_id": agent_id,
-                "agent_name": agent_names.get(agent_id, f"agent_{agent_id}"),
-                "platforms": results,
-            })
 
     # Cleanup
     for env in envs.values():

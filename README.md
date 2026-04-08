@@ -2,26 +2,39 @@
   <img src="logo.svg" alt="x-lens logo" width="180" />
 </p>
 
+<p align="center">
+  <img src="https://img.shields.io/badge/node-%3E%3D20-brightgreen?logo=node.js" alt="Node >= 20" />
+  <img src="https://img.shields.io/badge/typescript-5.9-blue?logo=typescript" alt="TypeScript" />
+  <img src="https://img.shields.io/badge/python-3.11+-yellow?logo=python" alt="Python 3.11+" />
+  <img src="https://img.shields.io/badge/LLM-Claude%20%7C%20Bedrock%20%7C%20OpenRouter%20%7C%20Groq-purple" alt="LLM Providers" />
+  <img src="https://img.shields.io/badge/tools-28-orange" alt="28 Tools" />
+  <img src="https://img.shields.io/badge/skills-45+-red" alt="45+ Skills" />
+  <img src="https://img.shields.io/badge/license-private-lightgrey" alt="License" />
+</p>
+
 # x-lens
 
-A persona-based autonomous AI agent with browser capabilities. Adding a new domain is `mkdir` and a markdown file.
+A persona-based autonomous AI agent with browser capabilities and a built-in learning loop. Adding a new domain is `mkdir` and a markdown file.
 
 ### What it does
 
 - **Browses the web autonomously** — navigate, click, type, screenshot, evaluate JavaScript
 - **Follows skills written in markdown** — the LLM reads instructions and executes them using tools
 - **Isolates domains via personas** — each persona gets its own browser profile, session history, system prompt, skills, and scheduled jobs
-- **Runs as a daemon** — 24/7 background agent with self-managed scheduling and macOS notifications
-- **Serves a UI** — status page at `localhost:3456`, jobs browser at `localhost:3456/jobs`
+- **Runs as a daemon** — 24/7 background agent with multi-threaded job execution and macOS notifications
+- **Accumulates structured data** — the Hive records market observations, validates past predictions, and builds patterns over time
+- **Control plane dashboard** — `x-lens dashboard` at `localhost:3456` showing timeline, runs, simulations, and learned patterns
+- **Pipe mode** — `x-lens -p` for composable CLI usage with `claude -p` and shell scripts
 
 ### What it supports
 
 | | |
 |---|---|
-| **LLM Providers** | Anthropic (direct API), AWS Bedrock (20+ model providers) |
+| **LLM Providers** | Anthropic (direct API), AWS Bedrock (20+ model providers), OpenRouter, Groq |
 | **Personas** | `trader` (~40 skills), `job-finder` (4 skills), `predictor` (1 skill), or create your own |
-| **Tools** | Browser (6), Shell, HTTP, Memory (3), User Profile (2), Session Search (1), Skills (3), Scheduling (3) — 21 total |
-| **Modes** | Command (single task), REPL (interactive), Daemon (24/7 autonomous), Telegram (group chat) |
+| **Tools** | Browser (6), Shell, HTTP, Memory (3), User Profile (2), Session Search (1), Skills (3), Scheduling (3), Hive (7) — 28 total |
+| **Modes** | Command, REPL (interactive), Pipe (`-p`), Daemon (24/7 multi-threaded), Dashboard, Telegram |
+| **Data** | Hive DB (structured events, patterns, runs, simulations), Session DB (FTS5), MEMORY.md |
 | **Skills format** | Markdown with YAML frontmatter, optional `references/` directory for progressive disclosure |
 | **Browser** | Persistent Chromium via Playwright, per-persona profiles, headless or visible |
 | **Platform** | macOS (native notifications via osascript), Linux (daemon mode) |
@@ -266,7 +279,7 @@ x-lens --persona trader
 ### Options
 
 ```
-x-lens [options] [prompt]
+x-lens [options] [command] [prompt]
 
 Options:
   --visible              Show browser window (default: headless)
@@ -274,8 +287,13 @@ Options:
   --model <model>        Override model ID
   --persona <persona>    Persona to activate (e.g., trader, predictor)
   --new                  Start a new session (clear conversation history)
+  -p, --pipe             Pipe mode: stdin/stdout, no TUI (works with claude -p)
   -V, --version          Output version number
   -h, --help             Display help
+
+Commands:
+  dashboard [--port]     Start the Hive dashboard (control plane)
+  daemon                 Manage the background daemon (start, stop, status, logs, install, uninstall)
 ```
 
 ### Examples
@@ -446,6 +464,105 @@ Each persona is fully isolated across five dimensions:
 - **System prompt** — each persona has its own identity and instructions, focused and token-efficient.
 - **Skills loaded** — only the persona's skills (plus global) are loaded. No cross-contamination.
 - **Scheduled jobs** — when the agent calls `schedule_create`, the system auto-fills the persona from runtime context. Jobs are dispatched to the correct persona's agent instance.
+
+## Hive (Structured Data Accumulation)
+
+The Hive is a persistent SQLite database (`~/.x-lens/hive.db`) that accumulates structured observations over time. The agent decides what to record — you talk, it captures what matters.
+
+### How it works
+
+1. **You run the trader daily** — via REPL, CLI, pipe, or daemon
+2. **Agent records findings** — regime checks, trade signals, observations go into the hive via `hive_record`
+3. **Next run: agent validates** — calls `hive_pending` to find yesterday's predictions, checks current data, marks outcomes via `hive_validate`
+4. **Patterns emerge** — after enough validations, the agent computes win rates and saves patterns via `hive_pattern_upsert`
+
+### Hive tools (7)
+
+| Tool | Description |
+|------|-------------|
+| `hive_record` | Record any structured event (type, category, ticker, data, confidence, tags — all optional) |
+| `hive_query` | Query events by date range, type, category, ticker, validation status |
+| `hive_validate` | Mark a past event with any outcome (correct, incorrect, early, late, etc.) |
+| `hive_pending` | Get events due for validation |
+| `hive_stats` | Overall stats: total events, accuracy rate, outcome breakdown |
+| `hive_patterns` | Query learned patterns with win rates |
+| `hive_pattern_upsert` | Create or update a pattern |
+
+### Schema
+
+The hive schema is intentionally loose — every column is optional or has a default. The agent decides what structure fits:
+
+- **type** — any string: `regime_check`, `signal`, `trade`, `news`, `earnings`, `note`, etc.
+- **category** — any string for grouping
+- **outcome** — any string: `correct`, `incorrect`, `partial`, `early`, `missed`, etc.
+- **data** — freeform JSON blob
+- **tags** — comma-separated freeform tags
+
+### Example timeline
+
+```
+Day 1: regime_check — VIX 18, GREEN, breadth 62% (confidence: 0.85)
+       signal — NVDA breakout above 950, target 1050 (confidence: 0.72)
+
+Day 2: [validation] NVDA signal → correct (hit 1050 in 3 days)
+       regime_check — VIX 22, YELLOW, breadth declining
+
+Day 30: pattern — "regime classifier 85% accurate over 30 samples"
+        pattern — "breakout signals work in GREEN regime, fail in RED"
+```
+
+## Dashboard (Control Plane)
+
+A local web UI for monitoring everything x-lens does.
+
+```bash
+x-lens dashboard                  # http://localhost:3456
+x-lens dashboard --port 4000      # custom port
+```
+
+### Tabs
+
+| Tab | What it shows |
+|-----|---------------|
+| **Timeline** | Hive events grouped by date, color-coded by validation status (green/red/amber/grey) |
+| **Runs** | Every CLI/daemon/pipe execution with prompt, response, duration, tool count |
+| **Simulations** | All simulation runs with scenario, agent/action counts, full reports |
+| **Patterns** | Pending validations + learned patterns with win rates |
+
+### Stats bar
+
+Total events, accuracy %, pending validations, run count, simulation count, pattern count. Auto-refreshes every 30 seconds.
+
+### What gets captured automatically
+
+| Source | Captured |
+|--------|----------|
+| `x-lens "prompt"` (CLI) | Run with prompt, response, duration, status |
+| `x-lens -p` (pipe) | Same |
+| Daemon scheduled jobs | Same + job ID |
+| `x-lens --persona trader` (REPL) | Session start/end |
+| Simulations | Scenario, agents, actions, report (synced from `~/.x-lens/simulations/`) |
+
+Hive events are NOT auto-captured — the agent decides what to record using `hive_record`.
+
+## Pipe Mode
+
+Run x-lens as a composable CLI tool. No TUI, no browser screenshots to terminal — raw text output to stdout.
+
+```bash
+# From argument
+x-lens -p "check market regime" --persona trader
+
+# From stdin
+echo "validate yesterday's signals" | x-lens -p --persona trader
+
+# Compose with claude -p
+claude -p "run: x-lens -p 'trader regime check' and summarize"
+
+# Use in scripts
+REGIME=$(x-lens -p "what is the current market regime? reply with just GREEN, YELLOW, or RED" --persona trader)
+echo "Current regime: $REGIME"
+```
 
 ## Simulation Engine (Market Sentiment Simulator)
 
@@ -644,6 +761,7 @@ x-lens stores persistent data in `~/.x-lens/`:
 
 | What | Path | Description |
 |------|------|-------------|
+| **Hive DB** | `~/.x-lens/hive.db` | Structured time-series data: events, patterns, runs, simulations. The core data layer. |
 | Memory | `~/.x-lens/MEMORY.md` | Agent's long-term memory — environment facts, tool quirks, project patterns. |
 | User Profile | `~/.x-lens/USER.md` | User preferences, expertise, communication style, role. |
 | Session DB | `~/.x-lens/sessions.db` | SQLite + FTS5 database of all past conversations (searchable). |
@@ -674,7 +792,7 @@ If port 3456 is busy, it automatically tries the next available port (up to 3465
 
 ## Tools
 
-The agent has 21 tools available:
+The agent has 28 tools available:
 
 | Tool | Description |
 |------|-------------|
@@ -699,6 +817,13 @@ The agent has 21 tools available:
 | `schedule_create` | Create a scheduled job (cron/interval/continuous) |
 | `schedule_delete` | Delete a scheduled job |
 | `schedule_list` | List all scheduled jobs with status |
+| `hive_record` | Record a structured event to the Hive |
+| `hive_query` | Query Hive events by date, type, ticker, etc. |
+| `hive_validate` | Mark a past event with its outcome |
+| `hive_pending` | Get events due for validation |
+| `hive_stats` | Hive statistics and accuracy rates |
+| `hive_patterns` | Query learned patterns |
+| `hive_pattern_upsert` | Create or update a pattern |
 
 ## Project Structure
 
@@ -711,20 +836,24 @@ x-lens/
 ├── tui/             # Terminal UI framework
 ├── app/             # x-lens application
 │   └── src/
-│       ├── main.ts          # CLI entry point
-│       ├── runner.ts        # Command mode (single task)
-│       ├── repl.ts          # Interactive REPL with session persistence
-│       ├── browser.ts       # Playwright browser controller
-│       ├── tools.ts         # Agent tools (browser, shell, fetch, memory, user profile, session search, skills, scheduling)
-│       ├── skills.ts        # Skill loader with persona support + user-created skills
-│       ├── memory.ts        # Memory & user profile persistence
-│       ├── session-store.ts # SQLite + FTS5 session store for cross-session search
-│       ├── daemon.ts        # Background daemon with job scheduling
-│       ├── job-store.ts     # Persistent job store (~/.x-lens/jobs.json)
+│       ├── main.ts            # CLI entry point (command, repl, pipe, dashboard, daemon)
+│       ├── runner.ts          # Command/pipe mode (single task)
+│       ├── repl.ts            # Interactive REPL with session persistence
+│       ├── browser.ts         # Playwright browser controller
+│       ├── tools.ts           # 28 agent tools (browser, shell, fetch, memory, skills, scheduling, hive)
+│       ├── hive.ts            # Hive DB — structured events, patterns, runs, simulations
+│       ├── dashboard.ts       # Hive dashboard — control plane web UI
+│       ├── thread-manager.ts  # Multi-threaded agent execution (concurrent daemon jobs)
+│       ├── skills.ts          # Skill loader with persona support + user-created skills
+│       ├── memory.ts          # Memory & user profile persistence
+│       ├── session-store.ts   # SQLite + FTS5 session store for cross-session search
+│       ├── daemon.ts          # Background daemon with multi-threaded job scheduling
+│       ├── job-store.ts       # Persistent job store (~/.x-lens/jobs.json)
 │       ├── session-manager.ts # Per-persona session persistence
-│       ├── notify.ts        # macOS native notifications
-│       ├── render.ts        # Terminal markdown rendering
-│       └── status-server.ts # Live monitoring page
+│       ├── compaction.ts      # Context window compaction for long sessions
+│       ├── notify.ts          # macOS native notifications
+│       ├── render.ts          # Terminal markdown rendering
+│       └── status-server.ts   # Live monitoring page
 ├── skills/          # All skills (global + per-persona)
 │   ├── global/      # Always loaded
 │   ├── trader/      # Trading & market analysis skills
@@ -757,7 +886,7 @@ npm run clean && npm run build
 
 ## How It Works
 
-1. You give the agent a task (via CLI or REPL)
+1. You give the agent a task (via CLI, REPL, pipe, or daemon schedule)
 2. The agent detects the active persona and loads the corresponding skills (repo + user-created)
 3. It matches your intent to a skill via triggers and description, or handles it freestyle
 4. It uses its tools to accomplish the task:
@@ -766,10 +895,12 @@ npm run clean && npm run build
    - **Fetch** — HTTP requests for APIs
    - **Memory** — read/write persistent notes across sessions
    - **Session Search** — recall context from past conversations via FTS5
+   - **Hive** — record structured findings, validate past predictions, query patterns
 5. The browser uses a persistent Chrome profile, so it stays logged into your accounts
 6. Sessions are preserved in SQLite — pick up where you left off, or use `--new` to start fresh
-7. The agent autonomously saves learnings (memory, user profile, skills) as it works
-8. The agent reports back with results rendered as rich terminal markdown
+7. The agent autonomously saves learnings (memory, user profile, skills) and records structured data to the Hive
+8. Every execution is captured in the Hive runs table — visible in the dashboard
+9. Over time, the Hive accumulates a timeline of observations with validation tracking and pattern recognition
 
 ## Disclaimer
 

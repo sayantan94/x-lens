@@ -21,14 +21,38 @@ program
   )
   .option("--persona <persona>", "Persona to use (e.g., trader)")
   .option("--new", "Start a new session (clear conversation history)")
+  .option("-p, --pipe", "Pipe mode: read prompt from stdin if no argument, output text only (no TUI). Works with: echo 'task' | x-lens -p")
   .action(async (prompt, options) => {
+    // Pipe mode: read from stdin if no prompt given
+    if (options.pipe && !prompt) {
+      const chunks: Buffer[] = [];
+      for await (const chunk of process.stdin) {
+        chunks.push(chunk);
+      }
+      prompt = Buffer.concat(chunks).toString("utf-8").trim();
+      if (!prompt) {
+        console.error("Error: no input received on stdin");
+        process.exit(1);
+      }
+    }
+
     if (prompt) {
       const { runOnce } = await import("./runner.js");
-      await runOnce(prompt, options);
+      await runOnce(prompt, { ...options, pipe: !!options.pipe });
     } else {
       const { runInteractive } = await import("./repl.js");
       await runInteractive(options);
     }
+  });
+
+// Dashboard subcommand
+program
+  .command("dashboard")
+  .description("Start the Hive dashboard (control plane)")
+  .option("--port <port>", "Port number (default: 3456)", "3456")
+  .action(async (options) => {
+    const { startDashboard } = await import("./dashboard.js");
+    await startDashboard(parseInt(options.port, 10));
   });
 
 // Daemon subcommand

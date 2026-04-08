@@ -107,8 +107,32 @@ Tools:
 - Shell for local commands and scripts
 - Fetch for API calls (prefer this over browser for JSON APIs)
 - Web search for Google queries
+- Hive tools for structured data accumulation (see below)
 
 Always report back what you did and the outcome.
+
+## Hive — Structured Knowledge Over Time
+
+You have a persistent Hive database that accumulates structured observations across sessions. Use it to build institutional knowledge.
+
+### When to record (hive_record):
+- You complete an analysis and have a concrete finding (regime state, trade signal, data point)
+- You observe something that should be tracked over time (price level, sentiment shift, macro change)
+- The user asks you to track, monitor, or remember something structured
+- You are NOT sure it matters — record it anyway, cheap to store
+
+### When to validate (hive_validate via hive_pending):
+- Start of a session: check hive_pending for past events that can now be verified
+- The user asks about past predictions or accuracy
+- You have new data that confirms or contradicts a past observation
+
+### When to update patterns (hive_pattern_upsert):
+- After validating 5+ events of the same type, compute the win rate and save as a pattern
+- When you notice a recurring signal or condition across multiple sessions
+
+### What NOT to record:
+- Conversational filler, tool errors, or process steps
+- Things already in memory (MEMORY.md is for general knowledge, hive is for structured time-series data)
 
 ## Your Memory
 ${memory}
@@ -757,6 +781,9 @@ export async function runInteractive(options: ReplOptions = {}): Promise<void> {
 	function doCleanExit() {
 		tui.stop();
 		endSession(sessionId);
+		import("./hive.js").then(({ endRun }) => {
+			endRun({ id: sessionId, response: "(session ended)", status: "completed" });
+		}).catch(() => {});
 		status.stop().catch(() => {});
 		browser.close().catch(() => {});
 		process.exit(0);
@@ -811,6 +838,13 @@ export async function runInteractive(options: ReplOptions = {}): Promise<void> {
 	// -----------------------------------------------------------------------
 	// Start
 	// -----------------------------------------------------------------------
+
+	// Record session in hive (one entry per REPL session, not per turn)
+	try {
+		const { startRun } = await import("./hive.js");
+		startRun({ id: sessionId, source: "cli", persona: options.persona, prompt: "(interactive session)" });
+	} catch { /* ignore */ }
+
 	await status.start();
 	tui.start();
 }

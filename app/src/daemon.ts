@@ -10,15 +10,13 @@ import { loadSkills, formatSkillsForPrompt } from "./skills.js";
 import { readMemory } from "./memory.js";
 import { JobStore, type Job } from "./job-store.js";
 import {
-  loadPersonaSession,
   appendPersonaSessionMessage,
-  savePersonaSession,
 } from "./session-manager.js";
 import { notify } from "./notify.js";
-import { shouldCompact, isContextOverflow, compact } from "./compaction.js";
 import { StatusServer } from "./status-server.js";
 import { formatToolLabel, extractResultPreview } from "./render.js";
 import { loadTelegramConfig, createTelegramBot, type TelegramBot } from "./telegram.js";
+import { ThreadManager, type Thread, type ThreadConfig } from "./thread-manager.js";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -70,7 +68,9 @@ interface PersonaPromptContent {
 
 const PERSONA_PROMPTS: Record<string, PersonaPromptContent> = {
   trader: {
-    intro: `You are NOT a passive task executor. You are a proactive market intelligence system. You have a full suite of trading skills — USE THEM ALL. Your job is to continuously monitor markets, detect opportunities and risks, and alert the user ONLY when something is actionable.`,
+    intro: `You are NOT a passive task executor. You are a proactive market intelligence system. You have a full suite of trading skills — USE THEM ALL. Your job is to continuously monitor markets, detect opportunities and risks, and alert the user ONLY when something is actionable.
+
+You have a HIVE — a structured database that accumulates your market observations over time. Use it.`,
     mission: `## Your Mission
 - Detect market regime changes (GREEN → YELLOW → RED) and alert immediately
 - Monitor sector rotation — which sectors are gaining/losing momentum
@@ -82,11 +82,13 @@ const PERSONA_PROMPTS: Record<string, PersonaPromptContent> = {
 - Identify high-conviction trade setups with entry/stop/target`,
     howToThink: `## How to Think
 For each scheduled run:
-1. What is the CURRENT market regime? (Use market-regime-classifier, market-environment-analysis)
-2. Is anything CHANGING? (Compare to your memory of previous runs)
-3. Are there ACTIONABLE setups? (Use screeners, OI analysis, earnings calendar)
-4. Should the user be ALERTED? (Only for high-conviction, time-sensitive findings)
-5. What should you REMEMBER? (Save learnings, update your model of the market)`,
+1. VALIDATE FIRST: Call hive_pending to check past predictions. For each one, verify the current data and call hive_validate with the outcome (correct/incorrect/partial/expired). This builds your track record.
+2. What is the CURRENT market regime? (Use market-regime-classifier, market-environment-analysis)
+3. RECORD to the hive: Call hive_record for every regime check, signal, or observation. Be structured — include VIX, breadth %, regime, tickers, entry/stop/target.
+4. Is anything CHANGING? (Compare to hive_query for recent history, not just memory)
+5. Are there ACTIONABLE setups? (Use screeners, OI analysis, earnings calendar)
+6. Should the user be ALERTED? (Only for high-conviction, time-sensitive findings)
+7. LEARN: After validating 10+ events, call hive_stats and hive_patterns to see your accuracy. Update patterns with hive_pattern_upsert when you see trends (e.g., "regime classifier is 85% accurate over 30 samples").`,
     alertCriteria: `## Alert Criteria — Only notify when:
 - Market regime changes (e.g., GREEN → YELLOW)
 - High-confidence trade setup found (>65% conviction with clear entry/stop/target)
@@ -227,20 +229,13 @@ ${skillsSection}`;
 }
 
 // ---------------------------------------------------------------------------
-// Persona Agent Manager
+// Thread Manager (replaces single-agent-per-persona)
 // ---------------------------------------------------------------------------
 
-interface PersonaAgent {
-  agent: Agent;
-  browser: BrowserController;
-  busy: boolean;
-  lastInputTokens: number;
-  lastOutputTokens: number;
-  lastCacheReadTokens: number;
-  lastCacheWriteTokens: number;
-}
+const threadManager = new ThreadManager(5); // max 5 concurrent threads per persona
 
-const personaAgents = new Map<string, PersonaAgent>();
+// Per-thread browser instances (created per thread, cleaned up on release)
+const threadBrowsers = new Map<string, BrowserController>();
 
 function resolveModel(provider: string, modelId?: string): Model<Api> {
   if (provider === "anthropic") {
@@ -261,16 +256,18 @@ function convertToLlm(messages: Message[]): Message[] {
   );
 }
 
-function getOrCreatePersonaAgent(
+/**
+ * Spawn a new thread for a persona. Each thread gets its own Agent instance,
+ * browser, and tools — fully independent from other threads.
+ */
+function spawnThread(
   persona: string,
   jobStore: JobStore,
   projectRoot: string,
   provider: string,
   modelId?: string,
-): PersonaAgent {
-  const existing = personaAgents.get(persona);
-  if (existing) return existing;
-
+  sessionKey?: string,
+): Thread | null {
   const profileDir = join(homedir(), ".x-lens", "browser-data", persona);
   const browser = new BrowserController({ headless: true, profileDir });
   const skills = loadSkills(projectRoot, persona);
@@ -278,28 +275,38 @@ function getOrCreatePersonaAgent(
   const model = resolveModel(provider, modelId);
   const memory = readMemory();
 
-  const agent = new Agent({
-    initialState: {
-      systemPrompt: buildDaemonSystemPrompt(skills, memory, persona),
-      model,
-      thinkingLevel: "off",
-      tools,
-    },
+  const thread = threadManager.spawn({
+    persona,
+    systemPrompt: buildDaemonSystemPrompt(skills, memory, persona),
+    model,
+    tools,
     convertToLlm,
-    steeringMode: "one-at-a-time",
-    followUpMode: "one-at-a-time",
+    loadSession: true,
+    sessionKey,
   });
 
-  // Restore persona session
-  const previousMessages = loadPersonaSession(persona);
-  if (previousMessages.length > 0) {
-    agent.replaceMessages(previousMessages);
-    log(`[${persona}] Restored ${previousMessages.length} messages from session`);
+  if (thread) {
+    threadBrowsers.set(thread.id, browser);
+    const msgCount = thread.agent.state.messages.length;
+    if (msgCount > 0) {
+      log(`[${persona}:${thread.id.split("_")[1]}] Loaded ${msgCount} messages from session`);
+    }
+  } else {
+    browser.close().catch(() => {});
+    log(`[${persona}] Cannot spawn thread — at capacity (${threadManager.activeCount(persona)} active)`);
   }
 
-  const pa: PersonaAgent = { agent, browser, busy: false, lastInputTokens: 0, lastOutputTokens: 0, lastCacheReadTokens: 0, lastCacheWriteTokens: 0 };
-  personaAgents.set(persona, pa);
-  return pa;
+  return thread;
+}
+
+/** Release a thread and clean up its browser. */
+async function releaseThread(thread: Thread): Promise<void> {
+  const browser = threadBrowsers.get(thread.id);
+  if (browser) {
+    try { await browser.close(); } catch { /* ignore */ }
+    threadBrowsers.delete(thread.id);
+  }
+  threadManager.release(thread.id);
 }
 
 // ---------------------------------------------------------------------------
@@ -315,17 +322,23 @@ async function executeJob(
   modelId?: string,
   telegramBot?: TelegramBot | null,
 ): Promise<void> {
-  const pa = getOrCreatePersonaAgent(job.persona, jobStore, projectRoot, provider, modelId);
-
-  if (pa.busy) {
-    log(`[${job.persona}] Skipping job "${job.id}" — agent is busy`);
+  const thread = spawnThread(job.persona, jobStore, projectRoot, provider, modelId);
+  if (!thread) {
+    log(`[${job.persona}] Skipping job "${job.id}" — at max concurrency`);
     return;
   }
 
-  pa.busy = true;
+  const threadLabel = `${job.persona}:${thread.id.split("_")[1]}`;
   const jobSource = `daemon:${job.id}`;
   const jobStartTime = Date.now();
-  log(`[${job.persona}] Running job "${job.id}": ${job.prompt}`);
+  const runId = `daemon_${job.id}_${Date.now()}`;
+  log(`[${threadLabel}] Running job "${job.id}": ${job.prompt}`);
+
+  // Auto-record run in hive
+  try {
+    const { startRun } = await import("./hive.js");
+    startRun({ id: runId, source: "daemon", persona: job.persona, job_id: job.id, prompt: job.prompt });
+  } catch { /* ignore hive errors during startup */ }
 
   status.addUpdate({
     type: "turn_start",
@@ -336,9 +349,13 @@ async function executeJob(
 
   let responseText = "";
   let hasError = false;
+  let lastInputTokens = 0;
+  let lastOutputTokens = 0;
+  let lastCacheReadTokens = 0;
+  let lastCacheWriteTokens = 0;
   const toolStartTimes = new Map<string, { startTime: number; args: Record<string, unknown> }>();
 
-  const unsubscribe = pa.agent.subscribe((event: AgentEvent) => {
+  const unsubscribe = thread.agent.subscribe((event: AgentEvent) => {
     if (event.type === "message_update" && event.assistantMessageEvent.type === "text_delta") {
       responseText += event.assistantMessageEvent.delta;
     }
@@ -347,7 +364,7 @@ async function executeJob(
       const args = (event.args ?? {}) as Record<string, unknown>;
       toolStartTimes.set(event.toolCallId, { startTime: Date.now(), args });
       const label = formatToolLabel(event.toolName, args);
-      log(`[${job.persona}] ▶ ${label}`);
+      log(`[${threadLabel}] ▶ ${label}`);
       status.addUpdate({
         type: "tool_start",
         timestamp: Date.now(),
@@ -369,7 +386,7 @@ async function executeJob(
       const resultPreview = extractResultPreview(event.result, isErr);
       const durationStr = durationMs > 1000 ? `${(durationMs / 1000).toFixed(1)}s` : `${durationMs}ms`;
       const icon = isErr ? "✗" : "✓";
-      log(`[${job.persona}] ${icon} ${label} (${durationStr})${resultPreview ? ` → ${resultPreview.slice(0, 100)}` : ""}`);
+      log(`[${threadLabel}] ${icon} ${label} (${durationStr})${resultPreview ? ` → ${resultPreview.slice(0, 100)}` : ""}`);
 
       status.addUpdate({
         type: "tool_end",
@@ -402,20 +419,20 @@ async function executeJob(
     }
 
     if (event.type === "message_end") {
-      appendPersonaSessionMessage(job.persona, event.message as Message);
+      threadManager.persistMessage(job.persona, event.message as Message);
       const msg = event.message as any;
       if (msg.role === "assistant" && msg.usage) {
-        pa.lastInputTokens = msg.usage.input || 0;
-        pa.lastOutputTokens = msg.usage.output || 0;
-        pa.lastCacheReadTokens = msg.usage.cacheRead || 0;
-        pa.lastCacheWriteTokens = msg.usage.cacheWrite || 0;
-        log(`[${job.persona}] tokens: ${msg.usage.input} input, ${msg.usage.output} output`);
+        lastInputTokens = msg.usage.input || 0;
+        lastOutputTokens = msg.usage.output || 0;
+        lastCacheReadTokens = msg.usage.cacheRead || 0;
+        lastCacheWriteTokens = msg.usage.cacheWrite || 0;
+        log(`[${threadLabel}] tokens: ${msg.usage.input} input, ${msg.usage.output} output`);
       }
     }
 
     if (event.type === "agent_end") {
       if (responseText) {
-        log(`[${job.persona}] Response:\n${responseText}`);
+        log(`[${threadLabel}] Response:\n${responseText}`);
       }
 
       // Check for alerts
@@ -433,7 +450,7 @@ async function executeJob(
         for (const msg of event.messages) {
           const errorMsg = (msg as any).errorMessage;
           if (errorMsg) {
-            logError(`[${job.persona}] Job "${job.id}" error: ${errorMsg}`);
+            logError(`[${threadLabel}] Job "${job.id}" error: ${errorMsg}`);
             hasError = true;
             status.addUpdate({
               type: "error",
@@ -454,8 +471,8 @@ async function executeJob(
       timestamp: Date.now(),
     };
 
-    await pa.agent.prompt(userMessage);
-    await pa.agent.waitForIdle();
+    await thread.agent.prompt(userMessage);
+    await thread.agent.waitForIdle();
 
     // Record run
     const summary = responseText.slice(0, 200);
@@ -463,14 +480,13 @@ async function executeJob(
 
     // Send notification for every completed run
     if (job.notify && responseText) {
-      // Check for [ALERT] markers — use as notification title if present
       const alertMatch = responseText.match(/\[ALERT\]\s*(.+?)(?:\n|$)/i);
       if (alertMatch) {
         const alertParts = alertMatch[1].split("|").map((s) => s.trim());
         const title = `🚨 ${alertParts[0]}`;
         const body = alertParts[1] || summary;
         notify(title, body);
-        log(`[${job.persona}] Alert notification: ${title}`);
+        log(`[${threadLabel}] Alert notification: ${title}`);
         if (telegramBot) {
           try {
             await telegramBot.sendText(`🚨 *${alertParts[0]}*\n${alertParts[1] || summary}`);
@@ -479,9 +495,8 @@ async function executeJob(
           }
         }
       } else {
-        // No alert — still notify with job summary
         notify(`${job.id}`, summary.slice(0, 200));
-        log(`[${job.persona}] Summary notification for ${job.id}`);
+        log(`[${threadLabel}] Summary notification for ${job.id}`);
         if (telegramBot) {
           try {
             await telegramBot.sendText(`*[${job.persona}/${job.id}]* ${summary.slice(0, 200)}`);
@@ -492,22 +507,31 @@ async function executeJob(
       }
     }
 
-    // Compact if needed
+    // Compact if needed (thread-safe via ThreadManager lock)
     const model = resolveModel(provider, modelId);
-    if (shouldCompact(pa.lastInputTokens + pa.lastCacheReadTokens, model.contextWindow)) {
-      log(`[${job.persona}] Compacting session...`);
-      const result = await compact(pa.agent, model, (msg) => log(`[${job.persona}] ${msg}`));
-      if (result) {
-        savePersonaSession(job.persona, pa.agent.state.messages as Message[]);
-      }
-    }
+    await threadManager.compactIfNeeded(
+      thread,
+      lastInputTokens + lastCacheReadTokens,
+      model,
+      (msg) => log(`[${threadLabel}] ${msg}`),
+    );
+
+    // Record completed run in hive
+    try {
+      const { endRun } = await import("./hive.js");
+      endRun({ id: runId, response: responseText.slice(0, 10000), status: hasError ? "error" : "completed", tool_count: 0 });
+    } catch { /* ignore */ }
 
     if (!hasError) {
-      log(`[${job.persona}] Job "${job.id}" completed. Summary: ${summary}`);
+      log(`[${threadLabel}] Job "${job.id}" completed. Summary: ${summary}`);
     }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    logError(`[${job.persona}] Job "${job.id}" failed: ${msg}`);
+    logError(`[${threadLabel}] Job "${job.id}" failed: ${msg}`);
+    try {
+      const { endRun } = await import("./hive.js");
+      endRun({ id: runId, response: "", status: "error", error_message: msg });
+    } catch { /* ignore */ }
     if (job.notify) {
       notify(`[${job.persona.toUpperCase()}] Job Failed`, `${job.id}: ${msg}`);
       if (telegramBot) {
@@ -523,18 +547,17 @@ async function executeJob(
       type: "turn_end",
       timestamp: Date.now(),
       content: "",
-      tokens: pa.lastInputTokens,
-      inputTokens: pa.lastInputTokens,
-      outputTokens: pa.lastOutputTokens,
-      cacheReadTokens: pa.lastCacheReadTokens,
-      cacheWriteTokens: pa.lastCacheWriteTokens,
+      tokens: lastInputTokens,
+      inputTokens: lastInputTokens,
+      outputTokens: lastOutputTokens,
+      cacheReadTokens: lastCacheReadTokens,
+      cacheWriteTokens: lastCacheWriteTokens,
       contextWindow: resolveModel(provider, modelId).contextWindow,
       turnDuration: Date.now() - jobStartTime,
       source: jobSource,
     });
     unsubscribe();
-    responseText = "";
-    pa.busy = false;
+    await releaseThread(thread);
   }
 }
 
@@ -623,8 +646,9 @@ export async function startDaemon(options: {
           const activePersona = senderPersonas.get(userId) || persona;
           const jobs = jobStore.list().filter((j) => j.persona === activePersona);
           const running = jobs.filter((j) => j.enabled).length;
+          const threads = threadManager.activeCount(activePersona);
           await telegramBot!.sendText(
-            `*Daemon status:* running\n*Persona:* ${activePersona}\n*Jobs:* ${running} active / ${jobs.length} total`,
+            `*Daemon status:* running\n*Persona:* ${activePersona}\n*Threads:* ${threads} active\n*Jobs:* ${running} active / ${jobs.length} total`,
           );
           return;
         }
@@ -641,25 +665,25 @@ export async function startDaemon(options: {
           return;
         }
 
-        // Route to persona agent
+        // Route to a new thread (no busy blocking)
         const activePersona = senderPersonas.get(userId) || persona;
-        const pa = getOrCreatePersonaAgent(activePersona, jobStore, projectRoot, provider, modelId);
+        const sessionKey = `telegram-${activePersona}`;
+        const thread = spawnThread(activePersona, jobStore, projectRoot, provider, modelId, sessionKey);
 
-        if (pa.busy) {
-          await telegramBot!.sendText(`⏳ Agent is busy with another task. Please wait.`);
+        if (!thread) {
+          await telegramBot!.sendText(`⚠️ All threads busy (${threadManager.activeCount(activePersona)} running). Try again shortly.`);
           return;
         }
 
-        pa.busy = true;
-        log(`[telegram] Routing to ${activePersona} agent: ${text.slice(0, 100)}`);
+        log(`[telegram] Routing to ${activePersona} thread ${thread.id.split("_")[1]}: ${text.slice(0, 100)}`);
 
         let responseText = "";
-        const unsubscribe = pa.agent.subscribe((event: AgentEvent) => {
+        const unsubscribe = thread.agent.subscribe((event: AgentEvent) => {
           if (event.type === "message_update" && event.assistantMessageEvent.type === "text_delta") {
             responseText += event.assistantMessageEvent.delta;
           }
           if (event.type === "message_end") {
-            appendPersonaSessionMessage(`telegram-${activePersona}`, event.message as Message);
+            threadManager.persistMessage(sessionKey, event.message as Message);
           }
         });
 
@@ -676,7 +700,7 @@ export async function startDaemon(options: {
             setTimeout(() => reject(new Error("Agent timed out after 3 minutes")), AGENT_TIMEOUT_MS),
           );
           await Promise.race([
-            (async () => { await pa.agent.prompt(userMessage); await pa.agent.waitForIdle(); })(),
+            (async () => { await thread.agent.prompt(userMessage); await thread.agent.waitForIdle(); })(),
             timeout,
           ]);
 
@@ -685,7 +709,7 @@ export async function startDaemon(options: {
             await telegramBot!.sendText(prefixed);
 
             // Send any screenshots from browser tools
-            const messages = pa.agent.state.messages;
+            const messages = thread.agent.state.messages;
             const lastMessages = messages.slice(-10);
             for (const msg of lastMessages) {
               if ((msg as any).role === "toolResult") {
@@ -701,22 +725,21 @@ export async function startDaemon(options: {
             }
           }
 
-          // Compact if needed
+          // Compact if needed (thread-safe)
           const model = resolveModel(provider, modelId);
-          if (shouldCompact(pa.lastInputTokens + pa.lastCacheReadTokens, model.contextWindow)) {
-            log(`[telegram][${activePersona}] Compacting session...`);
-            const result = await compact(pa.agent, model, (msg) => log(`[telegram][${activePersona}] ${msg}`));
-            if (result) {
-              savePersonaSession(`telegram-${activePersona}`, pa.agent.state.messages as Message[]);
-            }
-          }
+          await threadManager.compactIfNeeded(
+            thread,
+            0, // telegram doesn't track token counts granularly
+            model,
+            (msg) => log(`[telegram][${activePersona}] ${msg}`),
+          );
         } catch (err) {
           const errMsg = err instanceof Error ? err.message : String(err);
           log(`[telegram] Error: ${errMsg}`);
           try { await telegramBot!.sendText(`Error: ${errMsg}`); } catch { /* ignore */ }
         } finally {
           unsubscribe();
-          pa.busy = false;
+          await releaseThread(thread);
         }
         })().catch((err) => {
           log(`[telegram] Unhandled error in message handler: ${err instanceof Error ? err.message : String(err)}`);
@@ -810,12 +833,13 @@ export async function startDaemon(options: {
     for (const iv of intervals) clearInterval(iv);
     for (const [, ctrl] of continuousAborts) ctrl.abort();
 
-    for (const [persona, pa] of personaAgents) {
+    for (const [threadId, browser] of threadBrowsers) {
       try {
-        await pa.browser.close();
-        log(`[${persona}] Browser closed`);
+        await browser.close();
       } catch { /* ignore */ }
     }
+    threadBrowsers.clear();
+    log(`Closed ${threadManager.list().length} active threads`);
 
     try { await status.stop(); } catch { /* ignore */ }
     if (telegramBot) {
@@ -866,12 +890,13 @@ export function stopDaemon(): boolean {
   }
 }
 
-export function daemonStatus(): { running: boolean; pid?: number; jobs: Job[] } {
+export function daemonStatus(): { running: boolean; pid?: number; jobs: Job[]; activeThreads: number } {
   const pid = getDaemonPid();
   const store = new JobStore();
   return {
     running: pid !== null,
     pid: pid ?? undefined,
     jobs: store.list(),
+    activeThreads: threadManager.activeCount(),
   };
 }
