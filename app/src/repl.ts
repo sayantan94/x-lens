@@ -625,10 +625,28 @@ export async function runInteractive(options: ReplOptions = {}): Promise<void> {
 			// Spacer between turns
 			insertBeforeEditor(new Spacer(1));
 
-			// Proactive compaction check, then re-enable editor
+			// Proactive compaction check, then process queued follow-ups
 			checkAndCompact().finally(() => {
-				agentBusy = false;
-								tui.requestRender();
+				// If follow-up messages were queued while busy, continue the agent
+				if (agent.hasQueuedMessages()) {
+					turnStartTime = Date.now();
+					responseText = "";
+					isStreaming = false;
+					hasError = false;
+					activeResponseMd = null;
+					showLoader("Processing follow-up...");
+					agent.continue().catch((err: unknown) => {
+						const message = err instanceof Error ? err.message : String(err);
+						removeLoader();
+						const errComp = new Text(chalk.red(`  \u2717 ${message}`), 0, 0);
+						insertBeforeEditor(errComp);
+						agentBusy = false;
+						tui.requestRender();
+					});
+				} else {
+					agentBusy = false;
+					tui.requestRender();
+				}
 			});
 		}
 	});
