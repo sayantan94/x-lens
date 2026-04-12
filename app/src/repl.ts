@@ -487,6 +487,35 @@ export async function runInteractive(options: ReplOptions = {}): Promise<void> {
 
 		// Track token usage
 		if (event.type === "message_end") {
+			// Safety net: if the assistant message has text that wasn't streamed, render it now
+			const endMsg = event.message as any;
+			if (endMsg.role === "assistant" && Array.isArray(endMsg.content)) {
+				const fullText = endMsg.content
+					.filter((c: any) => c.type === "text" && c.text)
+					.map((c: any) => c.text)
+					.join("\n");
+				if (fullText && fullText !== responseText && fullText.length > responseText.length) {
+					// There's text we didn't render during streaming
+					const unrendered = responseText.length === 0 ? fullText : fullText.slice(responseText.length);
+					if (unrendered.trim()) {
+						if (!isStreaming) {
+							removeLoader();
+							const md = new Markdown(unrendered, 1, 1, markdownTheme);
+							insertBeforeEditor(md);
+						} else if (activeResponseMd) {
+							responseText = fullText;
+							activeResponseMd.setText(responseText);
+							tui.requestRender();
+						}
+					}
+				}
+			}
+			// Finalize streaming state
+			if (isStreaming) {
+				isStreaming = false;
+				activeResponseMd = null;
+			}
+
 			appendSessionMessage(event.message as Message);
 
 			// Persist to SQLite session store
