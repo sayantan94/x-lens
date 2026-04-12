@@ -439,12 +439,16 @@ export async function runInteractive(options: ReplOptions = {}): Promise<void> {
 			const icon = isErr ? toolStyle.icon.error("\u2717") : toolStyle.icon.success("\u2713");
 			const resultPreview = extractResultPreview(event.result, isErr);
 
-			let resultLine = `${icon} ${toolStyle.label(label)} ${toolStyle.duration(`(${duration}s)`)}`;
+			const headerLine = `${icon} ${toolStyle.label(label)} ${toolStyle.duration(`(${duration}s)`)}`;
+			const headerComp = new Text(headerLine, 1, 0);
+			insertBeforeEditor(headerComp);
+
 			if (resultPreview) {
-				resultLine += "\n" + toolStyle.result(`    ${resultPreview}`);
+				// Indent each line of multi-line output
+				const indented = resultPreview.split("\n").map((line: string) => `    ${line}`).join("\n");
+				const outputComp = new Text(toolStyle.result(indented), 0, 0);
+				insertBeforeEditor(outputComp);
 			}
-			const resultComp = new Text(resultLine, 1, 0);
-			insertBeforeEditor(resultComp);
 
 			status.addUpdate({
 				type: "tool_end",

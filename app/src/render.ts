@@ -124,14 +124,12 @@ export function extractResultPreview(result: unknown, isError: boolean): string 
 				textParts.push("[screenshot]");
 			}
 		}
-		const fullText = textParts.join(" | ");
-		if (!fullText) return "";
-
-		return fullText.replace(/\n/g, " ↵ ");
+		const fullText = textParts.join("\n");
+		return fullText || "";
 	}
 
 	if (typeof result === "string") {
-		return result.replace(/\n/g, " ↵ ");
+		return result;
 	}
 
 	return "";
