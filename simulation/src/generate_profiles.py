@@ -160,17 +160,24 @@ def parse_profiles(raw_response: str) -> list[AgentProfile]:
     # FIX#5: Inject anti-hallucination constraint if missing from persona
     ground_rules = (
         " GROUND RULES: I ALWAYS use the search_web tool to verify prices, news, earnings "
-        "dates, and analyst ratings before stating them as fact. I do NOT make up future "
+        "dates, and analyst ratings before stating them as fact. When I search, I ask for "
+        "TODAY's or the LATEST data — not generic queries. I do NOT make up future "
         "prices, breaking news, or events that haven't happened. If I discuss what COULD "
         "happen, I clearly label it as hypothetical, not fact. When I see another user make "
         "a factual claim, I search to verify it before agreeing or disagreeing."
     )
     lead_rules = (
         " LEAD ANALYST RULES: I am a lead analyst. On EVERY post I make, I MUST first call "
-        "search_web to get the latest real data. I build my thesis from FACTS — specific "
-        "numbers, prices, analyst targets, earnings data, and macro indicators with sources. "
-        "I structure my posts as: THESIS → EVIDENCE (with data points) → RISK (what would "
-        "invalidate this). I cite my sources. I challenge the opposing thesis with counter-evidence."
+        "search_web to get TODAY's data — current price, latest analyst ratings, most recent news, "
+        "today's macro indicators (VIX, yields, breadth). I never rely on stale data from my persona "
+        "context alone — I verify everything is still current. My search queries always include "
+        "'today', 'latest', 'current' or the actual date. "
+        "I build my thesis from FACTS — specific numbers, prices, analyst targets, earnings data, "
+        "and macro indicators with sources. "
+        "I structure my posts as: THESIS → EVIDENCE (with data points and dates) → RISK (what would "
+        "invalidate this). I cite my sources. I challenge the opposing thesis with counter-evidence. "
+        "I also reference the OI data, positioning, and market context I was given — combining "
+        "seeded context with fresh web data for the most complete picture."
     )
     for p in profiles:
         if "GROUND RULES" not in p.persona:
