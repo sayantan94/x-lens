@@ -402,11 +402,12 @@ export async function runInteractive(options: ReplOptions = {}): Promise<void> {
 			const args = (event.args ?? {}) as Record<string, unknown>;
 			toolStartTimes.set(event.toolCallId, { startTime: Date.now(), args });
 
-			// If we were streaming text, finalize the markdown
+			// Finalize current text segment — reset so post-tool text gets a fresh component
 			if (isStreaming) {
 				isStreaming = false;
 				activeResponseMd = null;
 			}
+			responseText = "";
 
 			const label = formatToolLabel(event.toolName, args);
 			const toolComp = new Text(toolStyle.icon.start("\u21B3") + " " + toolStyle.label(label), 1, 0);
