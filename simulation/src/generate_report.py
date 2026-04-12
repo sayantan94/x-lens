@@ -189,40 +189,48 @@ Generate a report with exactly these sections:
 **Agents**: ... participants across [platforms]
 **Rounds**: ... rounds ({len(agg['posts'])} substantive posts)
 
-### 🐂 Bull Thesis
-- Summarize the bull case using ONLY facts cited by agents (with web search sources)
-- List every data point supporting the bull case: price levels, analyst targets, earnings beats, macro indicators
-- Note which agents made these arguments and whether they used web search to verify
-- Entry point, target, and stop loss based on the evidence
+### Lead Analyst Conclusions
+- There are 2 NEUTRAL lead analysts who started with NO predetermined view (sentiment_bias = 0)
+- What did each lead conclude AFTER researching both sides? Quote their key posts.
+- Did the two leads agree or disagree? What data drove their conclusions?
+- Did either lead change their mind during the simulation based on new evidence?
+- The leads' conclusions carry the most weight because they are evidence-driven, not bias-driven.
 
-### 🐻 Bear Thesis
-- Summarize the bear case using ONLY facts cited by agents (with web search sources)
-- List every data point supporting the bear case: risks, downgrades, macro headwinds, technical breakdowns
-- Note which agents made these arguments and whether they used web search to verify
-- Downside target, hedge recommendation
+### Bull Evidence (sourced facts only)
+- List every FACT supporting the bull case, with the source (web search citation or seeded context data)
+- Data points: price levels, analyst targets, earnings, OI positioning, macro indicators
+- Note which agent cited each fact and whether it came from web search, seeded context, or was unsourced
+- Count: N sourced bull facts
 
-### Thesis Quality Assessment
-- How many agents used web search? (fact-based posts vs opinion-only posts)
+### Bear Evidence (sourced facts only)
+- List every FACT supporting the bear case, with the source
+- Data points: risks, downgrades, headwinds, technical breakdowns, OI positioning
+- Note which agent cited each fact and source
+- Count: N sourced bear facts
+
+### Evidence Quality
+- How many agents used web search vs posted opinions only?
+- How many facts are web-sourced vs context-sourced vs unsourced?
 - Did any agent fabricate data? Flag hallucinated prices or events.
-- Were the bull/bear leads' theses supported by real data?
-- Strength of evidence: rate each thesis 1-5 based on source quality and specificity
+- Which side has MORE and BETTER sourced evidence?
 
 ### Verdict
 - **Direction**: BULLISH / BEARISH / NEUTRAL with confidence 0-100%
-- **Bull evidence strength**: [strong/moderate/weak] — cite top 3 facts
-- **Bear evidence strength**: [strong/moderate/weak] — cite top 3 facts
+- **Based on**: what the neutral lead analysts concluded after weighing all evidence
+- **Bull evidence**: [strong/moderate/weak] — top 3 sourced facts
+- **Bear evidence**: [strong/moderate/weak] — top 3 sourced facts
 - **Recommended action**: specific entry, stop, target OR "no trade — insufficient edge"
 - **Key risk**: the single fact that could flip the verdict
 - **Time horizon**: how long this thesis is valid
 
 ### Sentiment Flow
-- Count posts by phase: Early/Mid/Late × Bull/Bear/Neutral
-- Start vs end sentiment shift
-- Did the thesis rounds change anyone's mind?
+- Count posts by phase: Early/Mid/Late x Bull/Bear/Neutral
+- Did any agents change their view based on evidence from others?
 
 ### Key Voices
-- Top 5 agents by influence and their stance (cite actual posts with data)
-- Who brought real facts vs who repeated opinions"""
+- Lead analysts first — their evidence-driven conclusions are the signal
+- Then top 3 agents who contributed real sourced facts
+- Note who brought data vs who repeated opinions"""
 
 
 def generate_report(scenario: str, agg: dict) -> str:

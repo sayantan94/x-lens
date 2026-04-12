@@ -33,10 +33,10 @@ def build_prompt(scenario: str, count: int = 15) -> str:
 Generate a diverse cast ensuring:
 - Mix of bulls, bears, and neutrals (not evenly split — let the scenario bias it naturally)
 - Mix of influence levels (a few high-influence voices, many regular participants)
-- Mix of archetypes: retail_trader, institutional_pm, sell_side_analyst, financial_journalist, reddit_degen, fintwit_influencer, quant_trader, options_dealer, value_investor, momentum_trader, macro_strategist, contrarian, bull_lead_analyst, bear_lead_analyst
-- You MUST include exactly ONE agent with archetype "bull_lead_analyst" and ONE with archetype "bear_lead_analyst". These are senior research analysts who ALWAYS use search_web to find real data before posting. They build fact-based thesis cases.
-- The bull_lead_analyst must have sentiment_bias >= 0.5, influence_weight >= 3.0, activity_level >= 0.8
-- The bear_lead_analyst must have sentiment_bias <= -0.5, influence_weight >= 3.0, activity_level >= 0.8
+- Mix of archetypes: retail_trader, institutional_pm, sell_side_analyst, financial_journalist, reddit_degen, fintwit_influencer, quant_trader, options_dealer, value_investor, momentum_trader, macro_strategist, contrarian, lead_analyst
+- You MUST include exactly TWO agents with archetype "lead_analyst". These are senior research analysts who start NEUTRAL — they have NO predetermined view. They research both sides, weigh the evidence, and form a conclusion based on data. They ALWAYS use search_web.
+- Both lead_analyst agents MUST have sentiment_bias = 0.0, influence_weight >= 3.0, activity_level >= 0.8
+- Give them distinct backgrounds (e.g., one macro-focused, one technical/flow-focused) so they approach the analysis from different angles
 - Each persona should have a unique personality, backstory, and reason for their stance
 - Sentiment bias should reflect their natural reaction to this specific scenario
 
@@ -167,22 +167,26 @@ def parse_profiles(raw_response: str) -> list[AgentProfile]:
         "a factual claim, I search to verify it before agreeing or disagreeing."
     )
     lead_rules = (
-        " LEAD ANALYST RULES: I am a lead analyst. On EVERY post I make, I MUST first call "
-        "search_web to get TODAY's data — current price, latest analyst ratings, most recent news, "
-        "today's macro indicators (VIX, yields, breadth). I never rely on stale data from my persona "
-        "context alone — I verify everything is still current. My search queries always include "
-        "'today', 'latest', 'current' or the actual date. "
-        "I build my thesis from FACTS — specific numbers, prices, analyst targets, earnings data, "
-        "and macro indicators with sources. "
-        "I structure my posts as: THESIS → EVIDENCE (with data points and dates) → RISK (what would "
-        "invalidate this). I cite my sources. I challenge the opposing thesis with counter-evidence. "
+        " LEAD ANALYST RULES: I am a neutral lead analyst. I have NO predetermined view — I go "
+        "where the evidence takes me. On EVERY post I make, I MUST first call search_web to get "
+        "TODAY's data — current price, latest analyst ratings, most recent news, today's macro "
+        "indicators (VIX, yields, breadth). I never rely on stale data from my persona context "
+        "alone — I verify everything is still current. My search queries always include 'today', "
+        "'latest', 'current' or the actual date. "
+        "I research BOTH the bull case AND the bear case with equal rigor. I look for evidence "
+        "that supports AND contradicts each thesis. I weigh the evidence and form my conclusion "
+        "based on which side has stronger, more recent, better-sourced data. "
+        "I structure my posts as: DATA FOUND → BULL CASE (with evidence) → BEAR CASE (with "
+        "evidence) → MY CONCLUSION (based on weight of evidence) → KEY RISK. "
+        "I cite my sources. When other agents make claims, I verify them with search_web. "
         "I also reference the OI data, positioning, and market context I was given — combining "
-        "seeded context with fresh web data for the most complete picture."
+        "seeded context with fresh web data for the most complete picture. "
+        "I change my mind if new data contradicts my prior conclusion."
     )
     for p in profiles:
         if "GROUND RULES" not in p.persona:
             p.persona = p.persona.rstrip() + ground_rules
-        if p.archetype in ("bull_lead_analyst", "bear_lead_analyst") and "LEAD ANALYST" not in p.persona:
+        if p.archetype == "lead_analyst" and "LEAD ANALYST" not in p.persona:
             p.persona = p.persona.rstrip() + lead_rules
 
     return profiles

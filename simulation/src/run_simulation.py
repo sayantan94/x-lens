@@ -494,7 +494,7 @@ async def async_main(config: SimulationConfig, profiles: list[AgentProfile],
             agent_names=agent_name_map,
         )
         # Give lead analysts 2x search limit
-        lead_ids = [p.user_id for p in profiles if p.archetype in ("bull_lead_analyst", "bear_lead_analyst")]
+        lead_ids = [p.user_id for p in profiles if p.archetype == "lead_analyst"]
         if lead_ids:
             set_lead_agents(lead_ids)
             print(f"📊 Lead analysts: {lead_ids} (2x search limit)", file=sys.stderr)
