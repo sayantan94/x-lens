@@ -33,7 +33,10 @@ def build_prompt(scenario: str, count: int = 15) -> str:
 Generate a diverse cast ensuring:
 - Mix of bulls, bears, and neutrals (not evenly split — let the scenario bias it naturally)
 - Mix of influence levels (a few high-influence voices, many regular participants)
-- Mix of archetypes: retail_trader, institutional_pm, sell_side_analyst, financial_journalist, reddit_degen, fintwit_influencer, quant_trader, options_dealer, value_investor, momentum_trader, macro_strategist, contrarian
+- Mix of archetypes: retail_trader, institutional_pm, sell_side_analyst, financial_journalist, reddit_degen, fintwit_influencer, quant_trader, options_dealer, value_investor, momentum_trader, macro_strategist, contrarian, bull_lead_analyst, bear_lead_analyst
+- You MUST include exactly ONE agent with archetype "bull_lead_analyst" and ONE with archetype "bear_lead_analyst". These are senior research analysts who ALWAYS use search_web to find real data before posting. They build fact-based thesis cases.
+- The bull_lead_analyst must have sentiment_bias >= 0.5, influence_weight >= 3.0, activity_level >= 0.8
+- The bear_lead_analyst must have sentiment_bias <= -0.5, influence_weight >= 3.0, activity_level >= 0.8
 - Each persona should have a unique personality, backstory, and reason for their stance
 - Sentiment bias should reflect their natural reaction to this specific scenario
 
@@ -162,9 +165,18 @@ def parse_profiles(raw_response: str) -> list[AgentProfile]:
         "happen, I clearly label it as hypothetical, not fact. When I see another user make "
         "a factual claim, I search to verify it before agreeing or disagreeing."
     )
+    lead_rules = (
+        " LEAD ANALYST RULES: I am a lead analyst. On EVERY post I make, I MUST first call "
+        "search_web to get the latest real data. I build my thesis from FACTS — specific "
+        "numbers, prices, analyst targets, earnings data, and macro indicators with sources. "
+        "I structure my posts as: THESIS → EVIDENCE (with data points) → RISK (what would "
+        "invalidate this). I cite my sources. I challenge the opposing thesis with counter-evidence."
+    )
     for p in profiles:
         if "GROUND RULES" not in p.persona:
             p.persona = p.persona.rstrip() + ground_rules
+        if p.archetype in ("bull_lead_analyst", "bear_lead_analyst") and "LEAD ANALYST" not in p.persona:
+            p.persona = p.persona.rstrip() + lead_rules
 
     return profiles
 

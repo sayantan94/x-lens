@@ -86,6 +86,16 @@ def _log_search_action(agent_id: int, query: str, result: str):
         log.error(f"Failed to log search action: {e}")
 
 
+# Lead analyst agent IDs get extra searches
+_lead_agent_ids: set[int] = set()
+
+
+def set_lead_agents(agent_ids: list[int]):
+    """Mark agents as lead analysts — they get 2x the search limit."""
+    global _lead_agent_ids
+    _lead_agent_ids = set(agent_ids)
+
+
 def _make_search_fn(agent_id: int):
     """Create a search function bound to a specific agent_id."""
 
@@ -107,13 +117,18 @@ def _make_search_fn(agent_id: int):
             Search results with cited sources from the web.
         """
         count = _agent_search_counts.get(agent_id, 0)
-        if count >= _max_searches_per_agent:
-            return (f"[SEARCH LIMIT REACHED] You have used all {_max_searches_per_agent} "
+        limit = _max_searches_per_agent * 2 if agent_id in _lead_agent_ids else _max_searches_per_agent
+        if count >= limit:
+            return (f"[SEARCH LIMIT REACHED] You have used all {limit} "
                     f"web searches allowed. Rely on existing information and other users' posts.")
 
+        # Inject today's date into query for fresh results
+        today = datetime.now().strftime("%B %d, %Y")
+        dated_query = f"{query} (as of {today})"
+
         try:
-            log.info(f"Agent {agent_id} searching: {query!r} ({count + 1}/{_max_searches_per_agent})")
-            result = nova_web_search(query, system_prompt=ANALYST_PROMPT)
+            log.info(f"Agent {agent_id} searching: {dated_query!r} ({count + 1}/{_max_searches_per_agent})")
+            result = nova_web_search(dated_query, system_prompt=ANALYST_PROMPT)
             _agent_search_counts[agent_id] = count + 1
             _agent_last_search_round[agent_id] = _current_round
             remaining = _max_searches_per_agent - count - 1

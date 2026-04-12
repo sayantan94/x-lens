@@ -189,26 +189,40 @@ Generate a report with exactly these sections:
 **Agents**: ... participants across [platforms]
 **Rounds**: ... rounds ({len(agg['posts'])} substantive posts)
 
-### Sentiment Trajectory
+### 🐂 Bull Thesis
+- Summarize the bull case using ONLY facts cited by agents (with web search sources)
+- List every data point supporting the bull case: price levels, analyst targets, earnings beats, macro indicators
+- Note which agents made these arguments and whether they used web search to verify
+- Entry point, target, and stop loss based on the evidence
+
+### 🐻 Bear Thesis
+- Summarize the bear case using ONLY facts cited by agents (with web search sources)
+- List every data point supporting the bear case: risks, downgrades, macro headwinds, technical breakdowns
+- Note which agents made these arguments and whether they used web search to verify
+- Downside target, hedge recommendation
+
+### Thesis Quality Assessment
+- How many agents used web search? (fact-based posts vs opinion-only posts)
+- Did any agent fabricate data? Flag hallucinated prices or events.
+- Were the bull/bear leads' theses supported by real data?
+- Strength of evidence: rate each thesis 1-5 based on source quality and specificity
+
+### Verdict
+- **Direction**: BULLISH / BEARISH / NEUTRAL with confidence 0-100%
+- **Bull evidence strength**: [strong/moderate/weak] — cite top 3 facts
+- **Bear evidence strength**: [strong/moderate/weak] — cite top 3 facts
+- **Recommended action**: specific entry, stop, target OR "no trade — insufficient edge"
+- **Key risk**: the single fact that could flip the verdict
+- **Time horizon**: how long this thesis is valid
+
+### Sentiment Flow
 - Count posts by phase: Early/Mid/Late × Bull/Bear/Neutral
 - Start vs end sentiment shift
-- Note any hallucinated price levels
-
-### Propagation Analysis
-- Dominant narrative and counter-narrative (cite specific posts)
-- Consensus level and crowded trade risk
-- Engagement pattern (quotes, likes — NOT just post count)
+- Did the thesis rounds change anyone's mind?
 
 ### Key Voices
-- Top 5 influential agents and their stance (cite their actual posts)
-- Who drove the narrative vs who pushed back
-
-### Trading Implication
-- Direction: BULLISH / BEARISH / MIXED with confidence %
-- If bullish: entry, target, stop
-- If bearish: hedge, exit, short level
-- Key risk that could invalidate
-- Note: discount any conclusion based on hallucinated prices"""
+- Top 5 agents by influence and their stance (cite actual posts with data)
+- Who brought real facts vs who repeated opinions"""
 
 
 def generate_report(scenario: str, agg: dict) -> str:
