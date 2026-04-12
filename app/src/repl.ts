@@ -445,9 +445,9 @@ export async function runInteractive(options: ReplOptions = {}): Promise<void> {
 			insertBeforeEditor(headerComp);
 
 			if (resultPreview) {
-				// Indent each line of multi-line output
+				// Show full multi-line tool output without dim styling
 				const indented = resultPreview.split("\n").map((line: string) => `    ${line}`).join("\n");
-				const outputComp = new Text(toolStyle.result(indented), 0, 0);
+				const outputComp = new Text(indented, 0, 0);
 				insertBeforeEditor(outputComp);
 			}
 
