@@ -17,6 +17,7 @@ CONTEXT_FILE=""
 WEB_SEARCH=""
 MAX_SEARCHES=""
 FACT_CHECK=""
+NO_FACT_CHECK=""
 FACT_CHECK_RATE=""
 
 # Parse args
@@ -33,6 +34,7 @@ while [[ $# -gt 0 ]]; do
     --web-search)     WEB_SEARCH="yes"; shift 1;;
     --max-searches-per-agent) MAX_SEARCHES="$2"; shift 2;;
     --fact-check)      FACT_CHECK="yes"; shift 1;;
+    --no-fact-check)   NO_FACT_CHECK="yes"; shift 1;;
     --fact-check-rate) FACT_CHECK_RATE="$2"; shift 2;;
     *) shift;;
   esac
@@ -42,6 +44,38 @@ SIM_DIR="$HOME/.x-lens/simulations/$SIM_ID"
 
 # Activate venv
 source "$SCRIPT_DIR/.venv/bin/activate"
+
+# Track every child we spawn so we can reliably clean them up on exit.
+# Without this, dashboard + run_simulation Python processes leak as orphans
+# whenever the worker is killed, times out, or the shell closes.
+DASHBOARD_PID=""
+SIM_PID=""
+WORKER_PID_FILE="$SIM_DIR/.worker.pid"
+echo "$$" > "$WORKER_PID_FILE"
+
+cleanup() {
+  local exit_code=$?
+  # Kill children in reverse spawn order. `|| true` so cleanup itself never fails.
+  if [[ -n "$SIM_PID" ]]; then
+    kill -TERM "$SIM_PID" 2>/dev/null || true
+    # Give it 3s to exit gracefully, then SIGKILL.
+    for _ in 1 2 3; do
+      kill -0 "$SIM_PID" 2>/dev/null || break
+      sleep 1
+    done
+    kill -KILL "$SIM_PID" 2>/dev/null || true
+  fi
+  if [[ -n "$DASHBOARD_PID" ]]; then
+    kill -TERM "$DASHBOARD_PID" 2>/dev/null || true
+    sleep 1
+    kill -KILL "$DASHBOARD_PID" 2>/dev/null || true
+  fi
+  rm -f "$WORKER_PID_FILE" 2>/dev/null || true
+  exit "$exit_code"
+}
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 echo "=== x-lens simulation pipeline ==="
 echo "SIM_ID:   $SIM_ID"
@@ -96,6 +130,7 @@ SIM_ARGS=(
 [[ -n "$WEB_SEARCH" ]] && SIM_ARGS+=(--web-search)
 [[ -n "$MAX_SEARCHES" ]] && SIM_ARGS+=(--max-searches-per-agent "$MAX_SEARCHES")
 [[ -n "$FACT_CHECK" ]] && SIM_ARGS+=(--fact-check)
+[[ -n "$NO_FACT_CHECK" ]] && SIM_ARGS+=(--no-fact-check)
 [[ -n "$FACT_CHECK_RATE" ]] && SIM_ARGS+=(--fact-check-rate "$FACT_CHECK_RATE")
 python3 -m src.run_simulation "${SIM_ARGS[@]}" &
 SIM_PID=$!
@@ -121,5 +156,5 @@ echo "=== PIPELINE COMPLETE ==="
 echo "Dashboard: http://localhost:$PORT"
 echo "Report:    $SIM_DIR/report.md"
 
-# Kill the IPC server
-kill "$SIM_PID" 2>/dev/null || true
+# Tell the cleanup trap that we reached the end successfully; it will tear
+# down SIM_PID (IPC server) and DASHBOARD_PID on exit.

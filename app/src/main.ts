@@ -183,6 +183,12 @@ daemon
     <true/>
     <key>KeepAlive</key>
     <true/>
+    <key>ProcessType</key>
+    <string>Background</string>
+    <key>ExitTimeOut</key>
+    <integer>25</integer>
+    <key>AbandonProcessGroup</key>
+    <false/>
     <key>StandardOutPath</key>
     <string>${logPath}</string>
     <key>StandardErrorPath</key>
@@ -239,6 +245,12 @@ daemon
     tail.on("error", () => {
       console.error("No daemon log found. Start the daemon first.");
     });
+    tail.on("exit", (code) => process.exit(code ?? 0));
+    // Forward Ctrl+C so the tail child doesn't outlive this CLI invocation.
+    const killTail = () => { try { tail.kill(); } catch {} };
+    process.on("SIGINT", killTail);
+    process.on("SIGTERM", killTail);
+    process.on("exit", killTail);
   });
 
 program.parse();

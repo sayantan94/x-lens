@@ -36,17 +36,17 @@
 	},
 	"types": "./dist/index.d.ts",
 	"dependencies": {
-		"@types/mime-types": "^2.1.4",
-		"chalk": "^5.5.0",
-		"get-east-asian-width": "^1.3.0",
-		"marked": "^15.0.12",
-		"mime-types": "^3.0.1"
+		"@types/mime-types": "2.1.4",
+		"chalk": "4.1.2",
+		"get-east-asian-width": "1.5.0",
+		"marked": "15.0.12",
+		"mime-types": "3.0.2"
 	},
 	"optionalDependencies": {
-		"koffi": "^2.9.0"
+		"koffi": "2.15.1"
 	},
 	"devDependencies": {
-		"@xterm/headless": "^5.5.0",
-		"@xterm/xterm": "^5.5.0"
+		"@xterm/headless": "5.5.0",
+		"@xterm/xterm": "5.5.0"
 	}
 }

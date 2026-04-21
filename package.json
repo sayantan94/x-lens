@@ -3,19 +3,27 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "workspaces": ["ai", "agent", "tui", "app"],
-  "engines": { "node": ">=20.0.0" },
+  "workspaces": [
+    "ai",
+    "agent",
+    "tui",
+    "app"
+  ],
+  "engines": {
+    "node": ">=20.0.0"
+  },
   "scripts": {
     "clean": "npm run clean --workspaces --if-present",
     "build": "cd tui && npm run build && cd ../ai && npm run build && cd ../agent && npm run build && cd ../app && npm run build",
     "dev": "npx concurrently -n tui,ai,agent,app \"cd tui && npm run dev\" \"cd ai && npm run dev\" \"cd agent && npm run dev\" \"cd app && npm run dev\"",
     "x-lens": "node app/dist/main.js",
+    "repl": "npm run build && node app/dist/main.js",
     "dashboard": "node app/dist/main.js dashboard"
   },
   "devDependencies": {
-    "@biomejs/biome": "^2.3.5",
-    "concurrently": "^9.2.1",
-    "typescript": "^5.9.2",
-    "tsx": "^4.20.3"
+    "@biomejs/biome": "2.4.6",
+    "concurrently": "9.2.1",
+    "typescript": "5.9.3",
+    "tsx": "4.21.0"
   }
 }

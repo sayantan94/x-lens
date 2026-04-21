@@ -48,11 +48,17 @@ function migrate(db: Database.Database): void {
       created_at TEXT,
       tags TEXT DEFAULT '',                   -- comma-separated freeform tags
 
+      -- Grounding & audit (added 2026-04 for hallucination reduction)
+      source TEXT DEFAULT '',                 -- tool that produced this event (required via tool wrapper)
+      run_id TEXT,                            -- which run recorded this
+
       -- Validation (filled in later)
       validated INTEGER DEFAULT 0,
       outcome TEXT,                           -- agent-defined: correct, wrong, early, missed, anything
       validated_at TEXT,
-      validation_notes TEXT
+      validation_notes TEXT,
+      evidence_source TEXT,                   -- tool call + value that grounded the validation
+      validated_by_run_id TEXT                -- which run validated this
     );
 
     CREATE INDEX IF NOT EXISTS idx_events_date ON events(date DESC);
@@ -112,6 +118,20 @@ function migrate(db: Database.Database): void {
 
     CREATE INDEX IF NOT EXISTS idx_simulations_created ON simulations(created_at DESC);
   `);
+
+  // Additive column migrations for existing DBs (SQLite won't error if missing).
+  const existing = new Set(
+    (db.prepare("PRAGMA table_info(events)").all() as { name: string }[]).map((c) => c.name),
+  );
+  const alter = (col: string, type: string) => {
+    if (!existing.has(col)) {
+      db.exec(`ALTER TABLE events ADD COLUMN ${col} ${type}`);
+    }
+  };
+  alter("source", "TEXT DEFAULT ''");
+  alter("run_id", "TEXT");
+  alter("evidence_source", "TEXT");
+  alter("validated_by_run_id", "TEXT");
 }
 
 // ---------------------------------------------------------------------------
@@ -130,10 +150,14 @@ export interface HiveEvent {
   summary: string;
   tags: string;
   created_at: string;
+  source: string;
+  run_id: string | null;
   validated: boolean;
   outcome: string | null;
   validated_at: string | null;
   validation_notes: string | null;
+  evidence_source: string | null;
+  validated_by_run_id: string | null;
 }
 
 export function recordEvent(opts: {
@@ -146,13 +170,20 @@ export function recordEvent(opts: {
   confidence?: number;
   summary?: string;
   tags?: string;
+  source: string;          // REQUIRED: tool call that produced this (e.g. "fetch", "shell:fetch_oi.py")
+  run_id?: string;
 }): string {
+  if (!opts.source || !opts.source.trim()) {
+    throw new Error(
+      "hive.recordEvent: 'source' is required. Pass the name of the tool call that produced this data (e.g. 'fetch', 'web_search', 'shell:fetch_oi.py'). Events without a source are ungrounded and must not be recorded.",
+    );
+  }
   const db = getHiveDb();
   const id = randomUUID();
   const today = new Date().toISOString().split("T")[0];
   db.prepare(`
-    INSERT INTO events (id, date, type, category, ticker, data, source_skill, confidence, summary, tags, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO events (id, date, type, category, ticker, data, source_skill, confidence, summary, tags, created_at, source, run_id)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     id,
     opts.date || today,
@@ -165,6 +196,8 @@ export function recordEvent(opts: {
     opts.summary || "",
     opts.tags || "",
     new Date().toISOString(),
+    opts.source.trim(),
+    opts.run_id || null,
   );
   return id;
 }
@@ -173,12 +206,32 @@ export function validateEvent(opts: {
   id: string;
   outcome: string;
   notes?: string;
+  evidence_source: string;   // REQUIRED: tool call (+ URL/value) that produced the ground truth
+  run_id?: string;
 }): boolean {
+  if (!opts.evidence_source || !opts.evidence_source.trim()) {
+    throw new Error(
+      "hive.validateEvent: 'evidence_source' is required. Pass the tool call + value that grounds this validation (e.g. 'fetch:https://...:price=582.40'). Self-validation without fresh tool evidence poisons the pattern database.",
+    );
+  }
   const db = getHiveDb();
   const result = db.prepare(`
-    UPDATE events SET validated = 1, outcome = ?, validated_at = ?, validation_notes = ?
-    WHERE id = ?
-  `).run(opts.outcome, new Date().toISOString(), opts.notes || null, opts.id);
+    UPDATE events
+       SET validated = 1,
+           outcome = ?,
+           validated_at = ?,
+           validation_notes = ?,
+           evidence_source = ?,
+           validated_by_run_id = ?
+     WHERE id = ?
+  `).run(
+    opts.outcome,
+    new Date().toISOString(),
+    opts.notes || null,
+    opts.evidence_source.trim(),
+    opts.run_id || null,
+    opts.id,
+  );
   return result.changes > 0;
 }
 
@@ -255,6 +308,29 @@ export interface HivePattern {
   created_at: string;
 }
 
+/**
+ * Return {missing, ungrounded} for a list of event IDs.
+ * Used by pattern upsert to reject patterns built on self-validated or missing events.
+ */
+export function checkEventEvidence(eventIds: string[]): {
+  missing: string[];
+  ungrounded: string[];
+} {
+  const db = getHiveDb();
+  const missing: string[] = [];
+  const ungrounded: string[] = [];
+  const stmt = db.prepare("SELECT id, validated, evidence_source FROM events WHERE id = ?");
+  for (const id of eventIds) {
+    const row = stmt.get(id) as { id: string; validated: number; evidence_source: string | null } | undefined;
+    if (!row) {
+      missing.push(id);
+    } else if (!row.validated || !row.evidence_source || !row.evidence_source.trim()) {
+      ungrounded.push(id);
+    }
+  }
+  return { missing, ungrounded };
+}
+
 export function upsertPattern(opts: {
   id?: string;
   name?: string;
@@ -264,7 +340,23 @@ export function upsertPattern(opts: {
   tags?: string;
   win_rate?: number;
   sample_size?: number;
+  event_ids?: string[];   // event IDs this pattern aggregates — each must be validated with evidence_source
 }): string {
+  // Gate: if event_ids provided, enforce evidence on each.
+  if (opts.event_ids && opts.event_ids.length > 0) {
+    const { missing, ungrounded } = checkEventEvidence(opts.event_ids);
+    if (missing.length > 0 || ungrounded.length > 0) {
+      const parts: string[] = [];
+      if (missing.length) parts.push(`missing events: ${missing.join(", ")}`);
+      if (ungrounded.length) parts.push(`events without evidence_source: ${ungrounded.join(", ")}`);
+      throw new Error(
+        `hive.upsertPattern: cannot build pattern on ungrounded events — ${parts.join("; ")}. Validate each event with fresh tool evidence first.`,
+      );
+    }
+    // Fold the event_ids into data for provenance.
+    opts = { ...opts, data: { ...(opts.data || {}), event_ids: opts.event_ids } };
+  }
+
   const db = getHiveDb();
   const id = opts.id || randomUUID();
   const now = new Date().toISOString();
@@ -489,9 +581,13 @@ function rowToEvent(r: any): HiveEvent {
     summary: r.summary || "",
     tags: r.tags || "",
     created_at: r.created_at || "",
+    source: r.source || "",
+    run_id: r.run_id ?? null,
     validated: r.validated === 1,
     outcome: r.outcome,
     validated_at: r.validated_at,
     validation_notes: r.validation_notes,
+    evidence_source: r.evidence_source ?? null,
+    validated_by_run_id: r.validated_by_run_id ?? null,
   };
 }

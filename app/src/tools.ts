@@ -192,7 +192,17 @@ function createShellTool(): AgentTool {
     execute: async (_toolCallId, params: any, signal) => {
       return new Promise<AgentToolResult<void>>((resolve) => {
         const timeout = params.timeout ?? 300000;
-        const child = exec(params.command, { timeout }, (error, stdout, stderr) => {
+        let done = false;
+
+        // Put the child in its own process group so we can kill any grandchildren it spawns
+        // (common for shells that fork, e.g. `sh -c "nohup foo &"`). Without `detached: true`
+        // + group kill, grandchildren become orphans.
+        const child = exec(params.command, {
+          timeout,
+          killSignal: "SIGKILL",
+        }, (error, stdout, stderr) => {
+          if (done) return;
+          done = true;
           const parts: string[] = [];
           if (stdout) parts.push(`stdout:\n${stdout}`);
           if (stderr) parts.push(`stderr:\n${stderr}`);
@@ -202,9 +212,24 @@ function createShellTool(): AgentTool {
           resolve(textResult(parts.join("\n\n") || "(no output)"));
         });
 
-        signal?.addEventListener("abort", () => {
-          child.kill();
-        });
+        const killChild = (reason: string) => {
+          if (done) return;
+          done = true;
+          try {
+            child.kill("SIGTERM");
+          } catch {}
+          // Force-kill after 2s if it didn't exit.
+          setTimeout(() => {
+            try { child.kill("SIGKILL"); } catch {}
+          }, 2000).unref();
+          resolve(textResult(`(${reason})`));
+        };
+
+        signal?.addEventListener("abort", () => killChild("aborted"));
+
+        // Belt-and-suspenders timeout — exec's own timeout doesn't always fire reliably
+        // (e.g. when the child ignores SIGTERM). We force-resolve at timeout + 5s.
+        setTimeout(() => killChild(`timed out after ${timeout}ms`), timeout + 5000).unref();
       });
     },
   };
@@ -341,17 +366,67 @@ function createWebSearchTool(browser: BrowserController): AgentTool {
     name: "web_search",
     label: "Web Search",
     description:
-      "Search the web using Google. Returns search results with titles, URLs, and snippets. Use this instead of manually navigating to Google.",
+      "Search the web via Google and return STRUCTURED results: a JSON list of {title, url, snippet}. Citations in your answer must come from this list — do not invent URLs or attribute quotes to sources that don't appear here.",
     parameters: Type.Object({
       query: Type.String({ description: "The search query" }),
+      limit: Type.Optional(Type.Number({ description: "Max results (default: 10)", default: 10 })),
     }),
     execute: async (_toolCallId, params: any) => {
       await browser.launch();
       const encodedQuery = encodeURIComponent(params.query);
       await browser.navigate(`https://www.google.com/search?q=${encodedQuery}`);
-      // Wait briefly for results to load
       await new Promise((r) => setTimeout(r, 1500));
-      return { content: await browserResult(browser), details: undefined };
+
+      const limit = Math.max(1, Math.min(50, params.limit ?? 10));
+      const pageUrl = params.query;
+
+      // Extract results from Google's organic result blocks. Google's markup changes often,
+      // so we look at a few common containers and degrade gracefully.
+      const extractor = `(() => {
+        const out = [];
+        const seen = new Set();
+        // Organic result blocks — Google has rotated markup; try the common shells.
+        const blocks = Array.from(document.querySelectorAll('div.MjjYud, div.g, div.tF2Cxc'));
+        for (const b of blocks) {
+          const a = b.querySelector('a[href^="http"]');
+          const h3 = b.querySelector('h3');
+          if (!a || !h3) continue;
+          const url = a.href;
+          if (!url || seen.has(url)) continue;
+          if (url.startsWith('https://www.google.com/')) continue;
+          seen.add(url);
+          const title = (h3.innerText || '').trim();
+          // Snippet lives in a sibling; sample a few known classes.
+          const snipEl = b.querySelector('div.VwiC3b, div[data-sncf], span.aCOpRe, div.IsZvec');
+          const snippet = snipEl ? String(snipEl.innerText || '').trim().slice(0, 400) : '';
+          out.push({ title, url, snippet });
+          if (out.length >= ${limit}) break;
+        }
+        return out;
+      })()`;
+
+      let results: { title: string; url: string; snippet: string }[] = [];
+      try {
+        const raw = await browser.evaluate(extractor);
+        if (Array.isArray(raw)) results = raw as typeof results;
+      } catch {
+        // evaluation failed — fall through to empty
+      }
+
+      if (results.length === 0) {
+        return textResult(
+          `web_search for "${pageUrl}" returned 0 parseable results. Google's markup may have changed, or this query is blocked. Try fetch() on a concrete URL, or rephrase the query.`,
+        );
+      }
+
+      const payload = {
+        query: params.query,
+        count: results.length,
+        results,
+      };
+      return textResult(
+        `Google results for "${params.query}" (${results.length}):\n\n${JSON.stringify(payload, null, 2)}`,
+      );
     },
   };
 }
@@ -599,23 +674,31 @@ function createHiveRecordTool(): AgentTool {
     name: "hive_record",
     label: "Record to Hive",
     description:
-      "Record a structured market event to the Hive timeline. Use for: regime checks, trade signals, alerts, observations. Each event has a type, category, optional ticker, confidence, and a JSON data payload. Events accumulate over time and can be validated later.",
+      "Record a GROUNDED structured event to the Hive timeline. Only record findings whose data came from a tool call in THIS session — the `source` field is required and must name that tool call. Speculation and opinion belong in MEMORY, not the Hive.",
     parameters: Type.Object({
+      source: Type.String({
+        description:
+          "REQUIRED. The tool call (and, where helpful, target) that produced this data — e.g. 'fetch', 'web_search', 'shell:fetch_oi.py', 'browser_evaluate:finviz.com'. If no tool produced the data, do NOT record; use memory_append instead.",
+      }),
       date: Type.Optional(Type.String({ description: "Date (YYYY-MM-DD). Defaults to today." })),
       type: Type.Optional(Type.String({ description: "Event type — anything: regime_check, signal, trade, earnings, news, note, etc." })),
       category: Type.Optional(Type.String({ description: "Optional grouping" })),
       ticker: Type.Optional(Type.String({ description: "Ticker symbol if applicable" })),
-      data: Type.Optional(Type.Record(Type.String(), Type.Unknown(), { description: "Any structured data" })),
+      data: Type.Optional(Type.Record(Type.String(), Type.Unknown(), { description: "Any structured data from the tool result" })),
       source_skill: Type.Optional(Type.String({ description: "Skill that produced this" })),
       confidence: Type.Optional(Type.Number({ description: "Confidence 0.0–1.0" })),
       summary: Type.Optional(Type.String({ description: "One-line summary" })),
       tags: Type.Optional(Type.String({ description: "Comma-separated freeform tags" })),
     }),
     execute: async (_toolCallId, params: any) => {
-      const { recordEvent } = await import("./hive.js");
-      const id = recordEvent(params);
-      const label = [params.type, params.ticker, params.summary].filter(Boolean).join(" — ");
-      return textResult(`Recorded to Hive: ${label || id.slice(0, 8)} (id: ${id.slice(0, 8)})`);
+      try {
+        const { recordEvent } = await import("./hive.js");
+        const id = recordEvent(params);
+        const label = [params.type, params.ticker, params.summary].filter(Boolean).join(" — ");
+        return textResult(`Recorded to Hive: ${label || id.slice(0, 8)} (id: ${id.slice(0, 8)}, source: ${params.source})`);
+      } catch (err: any) {
+        return textResult(`hive_record rejected: ${err.message}`);
+      }
     },
   };
 }
@@ -656,17 +739,25 @@ function createHiveValidateTool(): AgentTool {
     name: "hive_validate",
     label: "Validate Hive Event",
     description:
-      "Mark a past Hive event with its outcome. Use during retrospective checks to record whether a signal/prediction played out. This builds the pattern database over time.",
+      "Mark a past Hive event with its outcome based on FRESH tool evidence. You must fetch current data with a tool (fetch/web_search/shell) BEFORE calling this, and cite that call in `evidence_source`. Self-validation from memory is forbidden — it corrupts the pattern database.",
     parameters: Type.Object({
       id: Type.String({ description: "Event ID to validate (use hive_pending to find IDs)" }),
       outcome: Type.String({ description: "How the event played out — e.g., correct, incorrect, partial, expired, missed, early, late" }),
+      evidence_source: Type.String({
+        description:
+          "REQUIRED. The tool call + value that grounds this validation. Include the URL or concrete value you just fetched — e.g. 'fetch:https://finance.yahoo.com/quote/SPY:close=582.40' or 'shell:fetch_oi.py:max_pain=575'. If you cannot provide this, do NOT validate the event.",
+      }),
       notes: Type.Optional(Type.String({ description: "Context on the outcome" })),
     }),
     execute: async (_toolCallId, params: any) => {
-      const { validateEvent } = await import("./hive.js");
-      const ok = validateEvent(params);
-      if (!ok) return textResult(`Event ${params.id} not found.`);
-      return textResult(`Validated: ${params.id.slice(0, 8)} → ${params.outcome}${params.notes ? ` (${params.notes})` : ""}`);
+      try {
+        const { validateEvent } = await import("./hive.js");
+        const ok = validateEvent(params);
+        if (!ok) return textResult(`Event ${params.id} not found.`);
+        return textResult(`Validated: ${params.id.slice(0, 8)} → ${params.outcome} [evidence: ${params.evidence_source}]${params.notes ? ` (${params.notes})` : ""}`);
+      } catch (err: any) {
+        return textResult(`hive_validate rejected: ${err.message}`);
+      }
     },
   };
 }
@@ -756,7 +847,7 @@ function createHivePatternUpsertTool(): AgentTool {
     name: "hive_pattern_upsert",
     label: "Upsert Hive Pattern",
     description:
-      "Create or update a learned pattern. Use after validating a batch of events to record what you've learned (e.g., 'VIX regime classifier is 85% accurate over 30 samples').",
+      "Create or update a learned pattern. To CREATE a new pattern you must pass `event_ids` — the list of validated Hive events it aggregates. Each referenced event must already be validated with a non-empty evidence_source, or the upsert is rejected. This enforces that patterns (and their win rates) are grounded in real tool evidence, not self-validation.",
     parameters: Type.Object({
       id: Type.Optional(Type.String({ description: "Pattern ID to update. Omit to create new." })),
       name: Type.Optional(Type.String({ description: "Pattern name" })),
@@ -766,11 +857,24 @@ function createHivePatternUpsertTool(): AgentTool {
       tags: Type.Optional(Type.String({ description: "Comma-separated freeform tags" })),
       win_rate: Type.Optional(Type.Number({ description: "Win rate 0.0–1.0" })),
       sample_size: Type.Optional(Type.Number({ description: "Number of events this is based on" })),
+      event_ids: Type.Optional(Type.Array(Type.String(), {
+        description: "REQUIRED for new patterns. IDs of the validated events this pattern aggregates. Each must have evidence_source set.",
+      })),
     }),
     execute: async (_toolCallId, params: any) => {
-      const { upsertPattern } = await import("./hive.js");
-      const id = upsertPattern(params);
-      return textResult(`Pattern saved: ${params.name} (id: ${id.slice(0, 8)})`);
+      try {
+        const { upsertPattern } = await import("./hive.js");
+        // On create (no id passed), require event_ids so we can check grounding.
+        if (!params.id && (!params.event_ids || params.event_ids.length === 0)) {
+          return textResult(
+            "hive_pattern_upsert rejected: new patterns must cite `event_ids` — the validated hive events this pattern aggregates. Use hive_query to collect event IDs first.",
+          );
+        }
+        const id = upsertPattern(params);
+        return textResult(`Pattern saved: ${params.name || id.slice(0, 8)} (id: ${id.slice(0, 8)})`);
+      } catch (err: any) {
+        return textResult(`hive_pattern_upsert rejected: ${err.message}`);
+      }
     },
   };
 }

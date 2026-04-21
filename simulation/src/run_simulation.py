@@ -29,8 +29,10 @@ from .llm import get_camel_model
 _web_search_factory = None
 _web_search_round_setter = None  # function to update current round for search logging
 
-# Fact-check configuration
-_fact_check_enabled = False
+# Fact-check configuration — defaults to ON since simulation agents hallucinate
+# prices, catalysts, and earnings numbers that never appeared in the scenario.
+# Opt out with --no-fact-check.
+_fact_check_enabled = True
 _fact_check_rate = 1.0
 
 load_dotenv(Path(__file__).parent.parent / ".env")
@@ -73,10 +75,13 @@ def compute_start_hour(agent_configs: list[dict]) -> int:
 
 
 def log_action(log_path: str, round_num: int, platform: str, agent_id: int,
-               agent_name: str, action_type: str, action_args: dict | None = None):
+               agent_name: str, action_type: str, action_args: dict | None = None,
+               extras: dict | None = None):
     """Append an action entry to the JSONL log.
 
     FIX#1: action_type is always stored lowercase for consistency.
+    `extras` carries per-action metadata attached post-hoc — currently the
+    fact_check verdict — so downstream tools (generate_report) can surface it.
     """
     entry = {
         "round": round_num,
@@ -87,6 +92,10 @@ def log_action(log_path: str, round_num: int, platform: str, agent_id: int,
         "action_type": action_type.lower(),  # FIX#1: always lowercase
         "action_args": action_args or {},
     }
+    if extras:
+        for k, v in extras.items():
+            if v is not None:
+                entry[k] = v
     with open(log_path, "a") as f:
         f.write(json.dumps(entry) + "\n")
 
@@ -339,8 +348,10 @@ async def run_platform(platform: str, config: SimulationConfig, profiles: list[A
                 print(f"  [{platform}] Fact-checked {fc_count} posts in round {round_num}", file=sys.stderr)
 
         for action in new_actions:
+            extras = {"fact_check": action.get("fact_check")} if action.get("fact_check") else None
             log_action(log_path, round_num, platform, action["agent_id"],
-                       action["agent_name"], action["action_type"], action["action_args"])
+                       action["agent_name"], action["action_type"], action["action_args"],
+                       extras=extras)
 
         print(f"[{platform}] Round {round_num}/{total_rounds} (hour {simulated_hour}, "
               f"t+{simulated_minutes}min) — "
@@ -545,7 +556,8 @@ def main():
     parser.add_argument("--context-file", default=None, help="Path to context.md with raw market data")
     parser.add_argument("--web-search", action="store_true", help="Enable Nova web search tool for agents")
     parser.add_argument("--max-searches-per-agent", type=int, default=5, help="Max web searches per agent (default: 3)")
-    parser.add_argument("--fact-check", action="store_true", help="Enable automatic fact-checking of agent posts")
+    parser.add_argument("--fact-check", action=argparse.BooleanOptionalAction, default=True,
+                        help="Automatic fact-checking of agent posts (default: on). Use --no-fact-check to disable.")
     parser.add_argument("--fact-check-rate", type=float, default=1.0, help="Fraction of posts to fact-check (0.0-1.0, default: 1.0)")
     args = parser.parse_args()
 

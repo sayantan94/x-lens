@@ -16,6 +16,7 @@ CONTEXT_FILE=""
 WEB_SEARCH=""
 MAX_SEARCHES=""
 FACT_CHECK=""
+NO_FACT_CHECK=""
 FACT_CHECK_RATE=""
 
 # Parse args
@@ -32,6 +33,7 @@ while [[ $# -gt 0 ]]; do
     --web-search)     WEB_SEARCH="yes"; shift 1;;
     --max-searches-per-agent) MAX_SEARCHES="$2"; shift 2;;
     --fact-check)      FACT_CHECK="yes"; shift 1;;
+    --no-fact-check)   NO_FACT_CHECK="yes"; shift 1;;
     --fact-check-rate) FACT_CHECK_RATE="$2"; shift 2;;
     *) echo "Unknown arg: $1" >&2; exit 1;;
   esac
@@ -64,6 +66,7 @@ WORKER_ARGS=(
 [[ -n "$WEB_SEARCH" ]] && WORKER_ARGS+=(--web-search)
 [[ -n "$MAX_SEARCHES" ]] && WORKER_ARGS+=(--max-searches-per-agent "$MAX_SEARCHES")
 [[ -n "$FACT_CHECK" ]] && WORKER_ARGS+=(--fact-check)
+[[ -n "$NO_FACT_CHECK" ]] && WORKER_ARGS+=(--no-fact-check)
 [[ -n "$FACT_CHECK_RATE" ]] && WORKER_ARGS+=(--fact-check-rate "$FACT_CHECK_RATE")
 
 # Launch worker in background

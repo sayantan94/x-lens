@@ -6,7 +6,8 @@ import { join } from "node:path";
 import { homedir } from "node:os";
 import { BrowserController } from "./browser.js";
 import { createTools } from "./tools.js";
-import { loadSkills, formatSkillsForPrompt } from "./skills.js";
+import { loadSkills } from "./skills.js";
+import { buildDaemonAgentPrompt, type DaemonPersonaContent } from "./system-prompt.js";
 import { readMemory } from "./memory.js";
 import { JobStore, type Job } from "./job-store.js";
 import {
@@ -58,15 +59,7 @@ function logError(msg: string): void {
 // Persona-specific prompt content
 // ---------------------------------------------------------------------------
 
-interface PersonaPromptContent {
-  intro: string;
-  mission: string;
-  howToThink: string;
-  alertCriteria: string;
-  doNotAlert: string;
-}
-
-const PERSONA_PROMPTS: Record<string, PersonaPromptContent> = {
+const PERSONA_PROMPTS: Record<string, DaemonPersonaContent> = {
   trader: {
     intro: `You are NOT a passive task executor. You are a proactive market intelligence system. You have a full suite of trading skills — USE THEM ALL. Your job is to continuously monitor markets, detect opportunities and risks, and alert the user ONLY when something is actionable.
 
@@ -148,7 +141,7 @@ For each scheduled run:
   },
 };
 
-function getPersonaContent(persona: string): PersonaPromptContent {
+function getPersonaContent(persona: string): DaemonPersonaContent {
   if (PERSONA_PROMPTS[persona]) {
     return PERSONA_PROMPTS[persona];
   }
@@ -183,49 +176,12 @@ export function buildDaemonSystemPrompt(
   memory: string,
   persona: string,
 ): string {
-  const skillsSection = formatSkillsForPrompt(skills);
-  const content = getPersonaContent(persona);
-
-  return `You are x-lens, a senior autonomous agent running 24/7 as the "${persona}" persona.
-
-${content.intro}
-
-${content.mission}
-
-${content.howToThink}
-
-${content.alertCriteria}
-
-${content.doNotAlert}
-
-## Skill Usage Protocol
-1. BEFORE doing anything, scan the Available Skills list below
-2. If ANY skill matches, call skill_read to load its full instructions FIRST
-3. Follow the skill's instructions exactly — they contain proven workflows
-4. Chain multiple skills together when the situation calls for it
-5. Use general capabilities (browser, fetch, shell) to fill gaps between skills
-
-## Schedule Management
-You can create, modify, and delete your own monitoring schedules:
-- schedule_create: Add new monitoring jobs
-- schedule_delete: Remove jobs that aren't producing value
-- schedule_list: Review your current schedule
-
-Adapt your schedule based on conditions:
-- High-activity periods → increase scan frequency
-- Quiet periods → reduce frequency, save resources
-- If a scan consistently returns no signal → disable it, note in memory
-
-## Notification Format
-When you find something actionable, include this marker:
-[ALERT] <short title> | <1-2 sentence summary with key numbers>
-
-## Your Memory
-${memory}
-
-You MUST save important findings to memory using memory_append. This is how you learn across runs.
-
-${skillsSection}`;
+  return buildDaemonAgentPrompt({
+    skills,
+    memory,
+    persona,
+    personaContent: getPersonaContent(persona),
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -299,14 +255,36 @@ function spawnThread(
   return thread;
 }
 
+/**
+ * Close a browser but don't let a stuck Chromium hang shutdown forever.
+ * Playwright sometimes deadlocks on close() when the page has pending network / JS
+ * activity — without a race, the daemon shutdown blocks indefinitely and launchd
+ * ends up SIGKILLing the whole tree, leaving orphan Chromiums.
+ */
+async function closeBrowserWithTimeout(browser: BrowserController, timeoutMs = 5000): Promise<void> {
+  await Promise.race([
+    browser.close().catch(() => { /* ignore */ }),
+    new Promise<void>((r) => setTimeout(r, timeoutMs)),
+  ]);
+}
+
 /** Release a thread and clean up its browser. */
 async function releaseThread(thread: Thread): Promise<void> {
   const browser = threadBrowsers.get(thread.id);
   if (browser) {
-    try { await browser.close(); } catch { /* ignore */ }
+    await closeBrowserWithTimeout(browser);
     threadBrowsers.delete(thread.id);
   }
   threadManager.release(thread.id);
+}
+
+// Track every executeJob promise so graceful shutdown can wait for them.
+const inflightJobs = new Set<Promise<void>>();
+function trackJob(p: Promise<void>): Promise<void> {
+  inflightJobs.add(p);
+  const cleanup = () => inflightJobs.delete(p);
+  p.then(cleanup, cleanup);
+  return p;
 }
 
 // ---------------------------------------------------------------------------
@@ -777,16 +755,16 @@ export async function startDaemon(options: {
           continue;
         }
         const task = cron.schedule(job.schedule, () => {
-          executeJob(job, jobStore, projectRoot, provider, status, modelId, telegramBot);
+          trackJob(executeJob(job, jobStore, projectRoot, provider, status, modelId, telegramBot));
         });
         cronTasks.push(task);
         log(`Scheduled cron job "${job.id}": ${job.schedule}`);
       } else if (job.type === "interval" && job.interval_minutes) {
         const ms = job.interval_minutes * 60 * 1000;
         // Run immediately on start, then at interval
-        executeJob(job, jobStore, projectRoot, provider, status, modelId, telegramBot);
+        trackJob(executeJob(job, jobStore, projectRoot, provider, status, modelId, telegramBot));
         const iv = setInterval(() => {
-          executeJob(job, jobStore, projectRoot, provider, status, modelId, telegramBot);
+          trackJob(executeJob(job, jobStore, projectRoot, provider, status, modelId, telegramBot));
         }, ms);
         intervals.push(iv);
         log(`Scheduled interval job "${job.id}": every ${job.interval_minutes}min`);
@@ -799,7 +777,7 @@ export async function startDaemon(options: {
           while (!ctrl.signal.aborted) {
             const currentJob = jobStore.get(job.id);
             if (!currentJob || !currentJob.enabled) break;
-            await executeJob(currentJob, jobStore, projectRoot, provider, status, modelId, telegramBot);
+            await trackJob(executeJob(currentJob, jobStore, projectRoot, provider, status, modelId, telegramBot));
             await new Promise((r) => {
               const timeout = setTimeout(r, pauseMs);
               ctrl.signal.addEventListener("abort", () => { clearTimeout(timeout); r(undefined); }, { once: true });
@@ -825,32 +803,66 @@ export async function startDaemon(options: {
     }
   }, 60_000);
 
-  // Graceful shutdown
-  const shutdown = async () => {
-    log("=== x-lens daemon shutting down ===");
+  // Graceful shutdown. Order matters:
+  //   1. Stop accepting new work  (cron / interval / continuous)
+  //   2. Drain in-flight jobs (bounded wait — must not hang forever)
+  //   3. Force-close any browsers still open (bounded wait per browser)
+  //   4. Stop status server + telegram bot
+  //   5. Remove PID file, exit.
+  // The bounded waits are the whole point: without them, a single stuck
+  // Chromium or long-running job blocks daemon shutdown indefinitely, and
+  // launchd eventually SIGKILLs us — leaving orphan Chromium processes.
+  let shuttingDown = false;
+  const shutdown = async (signal: string) => {
+    if (shuttingDown) {
+      log(`Second ${signal} received — forcing exit`);
+      process.exit(1);
+    }
+    shuttingDown = true;
+    log(`=== x-lens daemon shutting down (${signal}) ===`);
+
+    // (1) Stop accepting new work.
     clearInterval(jobCheckInterval);
     for (const task of cronTasks) task.stop();
     for (const iv of intervals) clearInterval(iv);
     for (const [, ctrl] of continuousAborts) ctrl.abort();
 
-    for (const [threadId, browser] of threadBrowsers) {
-      try {
-        await browser.close();
-      } catch { /* ignore */ }
+    // (2) Drain in-flight jobs — at most DRAIN_MS.
+    const DRAIN_MS = 20_000;
+    const pending = inflightJobs.size;
+    if (pending > 0) {
+      log(`Waiting up to ${DRAIN_MS}ms for ${pending} in-flight job(s)...`);
+      await Promise.race([
+        Promise.allSettled([...inflightJobs]),
+        new Promise<void>((r) => setTimeout(r, DRAIN_MS)),
+      ]);
+      if (inflightJobs.size > 0) {
+        log(`Drain timeout — ${inflightJobs.size} job(s) still running; cleaning up anyway`);
+      }
     }
-    threadBrowsers.clear();
-    log(`Closed ${threadManager.list().length} active threads`);
 
-    try { await status.stop(); } catch { /* ignore */ }
+    // (3) Force-close every browser in parallel with a per-browser timeout.
+    const threadCount = threadBrowsers.size;
+    await Promise.all(
+      [...threadBrowsers.values()].map((b) => closeBrowserWithTimeout(b, 5000)),
+    );
+    threadBrowsers.clear();
+    log(`Closed ${threadCount} browser(s)`);
+
+    // (4) Stop services.
+    try { await Promise.race([status.stop(), new Promise((r) => setTimeout(r, 3000))]); } catch { /* ignore */ }
     if (telegramBot) {
-      try { await telegramBot.stop(); } catch { /* ignore */ }
+      try { await Promise.race([telegramBot.stop(), new Promise((r) => setTimeout(r, 3000))]); } catch { /* ignore */ }
     }
+
+    // (5) Final cleanup.
     try { unlinkSync(PID_FILE); } catch { /* ignore */ }
+    log("Shutdown complete");
     process.exit(0);
   };
 
-  process.on("SIGTERM", shutdown);
-  process.on("SIGINT", shutdown);
+  process.on("SIGTERM", () => { shutdown("SIGTERM"); });
+  process.on("SIGINT", () => { shutdown("SIGINT"); });
 
   log("Daemon running. Press Ctrl+C to stop.");
   notify("x-lens Daemon", "Daemon started and monitoring.");

@@ -49,6 +49,7 @@ def aggregate_actions(actions: list[dict], sim_dir: Path | None = None) -> dict:
 
     FIX#1: Case-insensitive action_type matching.
     FIX#2: For quote_post, fetch content from OASIS post table via new_post_id.
+    Added: fact-check verdict aggregation per agent.
     """
     # Load post content from DB for quote resolution
     post_map = {}
@@ -59,6 +60,10 @@ def aggregate_actions(actions: list[dict], sim_dir: Path | None = None) -> dict:
     action_type_counts: dict[str, int] = {}
     agent_activity: dict[str, int] = {}
     posts: list[dict] = []
+    # Fact-check aggregation: {agent_name: {"checked": N, "verified": N, "mismatch": N, "partial": N, "unverifiable": N}}
+    fact_check_by_agent: dict[str, dict[str, int]] = {}
+    fact_check_total = {"checked": 0, "verified": 0, "mismatch": 0, "partial": 0, "unverifiable": 0}
+    mismatched_claims: list[dict] = []
     total = 0
     max_round = 0
 
@@ -80,6 +85,27 @@ def aggregate_actions(actions: list[dict], sim_dir: Path | None = None) -> dict:
         round_num = action.get("round", 0)
         if round_num > max_round:
             max_round = round_num
+
+        # Fact-check rollup (attached to post actions by run_simulation.py)
+        fc = action.get("fact_check")
+        if fc and isinstance(fc, dict):
+            verdict = fc.get("overall_verdict", "unverifiable")
+            bucket = fact_check_by_agent.setdefault(
+                aname, {"checked": 0, "verified": 0, "mismatch": 0, "partial": 0, "unverifiable": 0},
+            )
+            bucket["checked"] += 1
+            bucket[verdict] = bucket.get(verdict, 0) + 1
+            fact_check_total["checked"] += 1
+            fact_check_total[verdict] = fact_check_total.get(verdict, 0) + 1
+            if verdict == "mismatch":
+                for c in fc.get("claims", []):
+                    if c.get("verdict") == "mismatch":
+                        mismatched_claims.append({
+                            "agent": aname,
+                            "round": round_num,
+                            "claim": c.get("claim", ""),
+                            "reality": c.get("reality", ""),
+                        })
 
         # FIX#1: Case-insensitive post detection
         if atype in ("create_post", "quote_post"):
@@ -108,6 +134,7 @@ def aggregate_actions(actions: list[dict], sim_dir: Path | None = None) -> dict:
                 posts.append({
                     "agent": aname, "content": content,
                     "round": round_num, "platform": platform,
+                    "fact_check": fc,
                 })
 
     return {
@@ -117,6 +144,9 @@ def aggregate_actions(actions: list[dict], sim_dir: Path | None = None) -> dict:
         "action_type_counts": action_type_counts,
         "agent_activity": agent_activity,
         "posts": posts,
+        "fact_check_total": fact_check_total,
+        "fact_check_by_agent": fact_check_by_agent,
+        "mismatched_claims": mismatched_claims,
     }
 
 
@@ -151,6 +181,41 @@ def build_report_prompt(scenario: str, agg: dict) -> str:
     top_agents = sorted(agg["agent_activity"].items(), key=lambda x: x[1], reverse=True)[:7]
     top_agents_text = "\n".join(f"- {name}: {count} actions" for name, count in top_agents)
 
+    # Fact-check rollup — deterministic, not LLM-eyeballed
+    fc_total = agg.get("fact_check_total", {})
+    fc_by_agent = agg.get("fact_check_by_agent", {})
+    mismatches = agg.get("mismatched_claims", [])
+    if fc_total.get("checked", 0) > 0:
+        total_checked = fc_total["checked"]
+        total_mm = fc_total.get("mismatch", 0)
+        total_ver = fc_total.get("verified", 0)
+        fc_header = (
+            f"**Fact-check results (from Nova-backed verification, not LLM eyeballing):**\n"
+            f"- Posts checked: {total_checked}\n"
+            f"- Verified: {total_ver}\n"
+            f"- Mismatch (agent fabricated / wrong): {total_mm}\n"
+            f"- Partial / unverifiable: {total_checked - total_ver - total_mm}\n"
+        )
+        if fc_by_agent:
+            agent_lines = []
+            for name, b in sorted(fc_by_agent.items(), key=lambda x: -x[1]["checked"])[:10]:
+                acc = (b.get("verified", 0) / b["checked"] * 100) if b["checked"] else 0
+                agent_lines.append(
+                    f"  - {name}: {b['checked']} checked, "
+                    f"{b.get('verified', 0)} verified, {b.get('mismatch', 0)} mismatch ({acc:.0f}% accuracy)"
+                )
+            fc_header += "\nPer-agent accuracy:\n" + "\n".join(agent_lines) + "\n"
+        if mismatches:
+            mm_lines = []
+            for m in mismatches[:10]:
+                mm_lines.append(
+                    f'  - R{m["round"]} {m["agent"]}: claimed "{m["claim"][:120]}" — reality: {m["reality"][:120]}'
+                )
+            fc_header += f"\nTop mismatched claims (of {len(mismatches)} total):\n" + "\n".join(mm_lines) + "\n"
+        fc_section = fc_header
+    else:
+        fc_section = "**Fact-check:** disabled or no verifiable posts. Treat all specific prices/events in this report as potentially fabricated.\n"
+
     return f"""Analyze this social simulation and generate a trading signal report.
 
 **Scenario:** {scenario}
@@ -166,6 +231,8 @@ def build_report_prompt(scenario: str, agg: dict) -> str:
 
 **Most Active Agents:**
 {top_agents_text}
+
+{fc_section}
 
 **EARLY posts (rounds 1-{third}, {len(early_posts)} posts):**
 {fmt_posts(early_posts)}
@@ -211,7 +278,8 @@ Generate a report with exactly these sections:
 ### Evidence Quality
 - How many agents used web search vs posted opinions only?
 - How many facts are web-sourced vs context-sourced vs unsourced?
-- Did any agent fabricate data? Flag hallucinated prices or events.
+- Use the **Fact-check results** block above: list the per-agent mismatch rates verbatim. Do NOT eyeball mismatches — cite the verified numbers.
+- For any "top mismatched claim" in that block, quote the agent's fabricated claim and the verified reality side by side.
 - Which side has MORE and BETTER sourced evidence?
 
 ### Verdict
